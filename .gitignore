@@ -1,0 +1,33 @@
+# .NET build products (including test projects)
+**/bin/
+**/obj/
+
+# Local releases and generated validation output
+/dist/
+/build/output/
+/build/staging/
+/build/previews/
+/build/protocol-review/
+/build/*smoke*.txt
+*.exe
+*.exe.previous
+*.exe.new
+
+# IDE and machine-local state
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+*.log
+*.log.*
+Thumbs.db
+Desktop.ini
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example

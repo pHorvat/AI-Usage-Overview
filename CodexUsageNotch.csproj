@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SelfContained>false</SelfContained>
+    <DebugType>embedded</DebugType>
+    <Optimize>true</Optimize>
+    <Version>1.2.2</Version>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>CodexUsageNotch</AssemblyName>
+    <RootNamespace>CodexUsageNotch</RootNamespace>
+    <ApplicationIcon>Assets\CodexUsageNotch.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <InternalsVisibleTo Include="CodexUsageNotch.Tests" />
+    <EmbeddedResource Include="Assets\CodexIcon.png" />
+  </ItemGroup>
+</Project>
