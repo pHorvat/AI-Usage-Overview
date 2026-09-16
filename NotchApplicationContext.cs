@@ -8,6 +8,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private readonly TrayHost _tray = new();
     private readonly ContextMenuStrip _menu = new();
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 1000 };
+    private readonly System.Windows.Forms.Timer _trayHoverDelay = new() { Interval = 500 };
     private readonly UserPreferences _preferences = new();
     private readonly RefreshSchedule _schedule = new();
     private readonly CancellationTokenSource _shutdown = new();
@@ -18,6 +19,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _refresh = new("Refresh now");
     private readonly string? _smokeReport;
     private readonly Func<CodexUsageClient> _clientFactory;
+    private readonly Func<Rectangle> _trayBounds;
     private CodexUsageClient? _client;
     private LoginDialog? _login;
     private string? _loginId;
@@ -34,10 +36,11 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private Task _operation = Task.CompletedTask;
     private Task _loginCompletion = Task.CompletedTask;
 
-    public NotchApplicationContext(string? smokeReport = null, Func<CodexUsageClient>? clientFactory = null)
+    public NotchApplicationContext(string? smokeReport = null, Func<CodexUsageClient>? clientFactory = null, Func<Rectangle>? trayBounds = null)
     {
         _smokeReport = smokeReport;
         _clientFactory = clientFactory ?? (() => new CodexUsageClient());
+        _trayBounds = trayBounds ?? _tray.IconBounds;
         _dispatch.CreateControl();
         if (smokeReport is null) _preferences.Load();
         _visibility.Checked = _preferences.StripVisible;
@@ -61,10 +64,24 @@ internal sealed class NotchApplicationContext : ApplicationContext
         var exit = new ToolStripMenuItem("Exit"); exit.Click += async (_, _) => await ExitAsync();
         _menu.Items.AddRange([_refresh, _connect, new ToolStripSeparator(), _visibility, _ring, _startup, new ToolStripSeparator(), exit]);
         _menu.Closed += (_, _) => _tray.ReturnFocus();
-        _tray.HoverOpened += () => { if (!_menu.Visible && !_popup.Interactive) OpenPopup(false); };
-        _tray.Selected += () => { if (_popup.Visible && _popup.Interactive) _popup.Dismiss(); else OpenPopup(true); };
+        _trayHoverDelay.Tick += (_, _) =>
+        {
+            _trayHoverDelay.Stop();
+            if (!_exit && !_menu.Visible && !_popup.Interactive && _trayBounds().Contains(Cursor.Position)) OpenPopup(false);
+        };
+        _tray.HoverOpened += () =>
+        {
+            if (!_exit && !_menu.Visible && !_popup.Visible && !_trayHoverDelay.Enabled) _trayHoverDelay.Start();
+        };
+        _tray.HoverClosed += () => _trayHoverDelay.Stop();
+        _tray.Selected += () =>
+        {
+            _trayHoverDelay.Stop();
+            if (_popup.Visible && _popup.Interactive) _popup.Dismiss(); else OpenPopup(true);
+        };
         _tray.ContextRequested += () =>
         {
+            _trayHoverDelay.Stop();
             _popup.Dismiss(); _tray.FocusHost();
             var anchor = _tray.IconBounds();
             var point = PopupPlacement.Place(anchor, _menu.GetPreferredSize(Size.Empty), Screen.FromRectangle(anchor).WorkingArea);
@@ -253,7 +270,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
         if (_schedule.Due && _state.Status is not (ConnectionStatus.NeedsLogin or ConnectionStatus.SigningIn or ConnectionStatus.LoginFailed)) StartRefresh();
     }
     private void OpenPopup(bool interactive)
-    { _popup.Present(_state, _theme); _popup.Open(_tray.IconBounds, false, interactive); }
+    { _popup.Present(_state, _theme); _popup.Open(_trayBounds, false, interactive); }
     private void Present()
     {
         _strip.Present(_state, _theme);
@@ -283,8 +300,9 @@ internal sealed class NotchApplicationContext : ApplicationContext
     internal async Task ExitAsync()
     {
         if (_exit) return;
-        _exit = true; _tick.Stop(); _shutdown.Cancel();
+        _exit = true; _tick.Stop(); _trayHoverDelay.Stop(); _shutdown.Cancel();
         _popup.Dismiss(); _strip.Hide(); _menu.Close();
+        _login?.Close();
         var client = _client; _client = null;
         try
         {
@@ -302,7 +320,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
             _disposed = true;
             _exit = true; _shutdown.Cancel();
             _client?.Abort();
-            _tick.Dispose(); _login?.Dispose(); _popup.Dispose(); _strip.Dispose(); _menu.Dispose(); _tray.Dispose(); _dispatch.Dispose();
+            _tick.Dispose(); _trayHoverDelay.Dispose(); _login?.Dispose(); _popup.Dispose(); _strip.Dispose(); _menu.Dispose(); _tray.Dispose(); _dispatch.Dispose();
             _shutdown.Dispose();
         }
         base.Dispose(disposing);

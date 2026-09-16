@@ -52,7 +52,7 @@ internal static class UiTests
             Check(popup.Visible, "pointer can cross from icon into card");
             Cursor.Position = new Point(work.Left + 10, work.Top + 40); Pump(200);
             Check(popup.Visible, "leave grace period");
-            Pump(300); Check(!popup.Visible, "preview dismisses after leaving");
+            Until(() => !popup.Visible); Check(!popup.Visible, "preview dismisses after leaving");
             popup.Open(() => anchor, false, true); Pump(80);
             Check(popup.Visible && popup.Interactive && popup.ContainsFocus, "click opens keyboard-accessible card");
             var buttons = popup.Controls.OfType<Button>().ToArray();
@@ -119,12 +119,34 @@ internal static class UiTests
         var pending = new Tests.FakeTransport(sample) { HangLogin = true };
         var failed = new Tests.FakeTransport(sample) { LoginResult = "null" };
         var transports = new Queue<Tests.FakeTransport>([initial, completed, pending, failed]);
-        using var context = new NotchApplicationContext(clientFactory: () => new CodexUsageClient(() => transports.Dequeue()));
+        // Keep synthetic hover callbacks independent of Shell overflow-icon placement.
+        var work = Screen.PrimaryScreen!.WorkingArea;
+        var icon = new Rectangle(work.Left + 100, work.Bottom - 100, 24, 24);
+        using var context = new NotchApplicationContext(clientFactory: () => new CodexUsageClient(() => transports.Dequeue()), trayBounds: () => icon);
         UsageState State() => Field<UsageState>(context, "_state");
         var connect = Field<ToolStripMenuItem>(context, "_connect");
         try
         {
             Until(() => State().Status == ConnectionStatus.Ready);
+            var tray = Field<TrayHost>(context, "_tray");
+            var popup = Field<CardPopup>(context, "_popup");
+            Cursor.Position = new Point(icon.Left + icon.Width / 2, icon.Top + icon.Height / 2);
+            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x406));
+            Pump(200);
+            check(!popup.Visible, "passing over the tray does not immediately open the preview");
+            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x407));
+            Pump(400);
+            check(!popup.Visible, "leaving the tray cancels the pending preview");
+            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x406));
+            Until(() => popup.Visible);
+            check(popup.Visible && !popup.Interactive, "remaining over the tray opens the delayed preview");
+            popup.Dismiss();
+            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x406));
+            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x400));
+            check(popup.Visible && popup.Interactive, "clicking during the hover delay opens the interactive card immediately");
+            popup.Dismiss();
+            Pump(600);
+            check(!popup.Visible, "clicking cancels the pending hover preview");
             var next = Field<RefreshSchedule>(context, "_schedule").Next;
             initial.Push("{\"method\":\"account/rateLimits/updated\",\"params\":{\"rateLimits\":{\"primary\":{\"usedPercent\":80}}}}");
             Until(() => State().Snapshot?.Primary?.Remaining == 20);
