@@ -15,7 +15,9 @@ Example cards in dark and light mode (sample values):
 
 You need Windows x64 with a desktop session, an installed Windows `codex.exe`, and a ChatGPT sign-in that provides Codex allowance. Codex must be able to connect to its service to retrieve fresh usage.
 
-### 1. Choose an edition
+### 1. Download an edition
+
+Download the executable from [GitHub Releases](https://github.com/pHorvat/AI-Usage-Overview/releases). Open the release you want and expand **Assets**, then choose one of the `.exe` files below. You do not need to clone the repository or build the app yourself. The **Source code** archives are for working with the source; choose an `.exe` to run the app.
 
 | Executable | Requirements |
 | --- | --- |
@@ -40,6 +42,10 @@ This creates both executables in the project folder. See [Build a release](#buil
 4. Hover or click the tray icon to see the usage card. Right-click it and choose **Refresh now** whenever you want a fresh reading.
 
 Run one edition at a time. If an instance is already running, opening another exits quietly.
+
+### Updating the app
+
+Download your preferred edition from [GitHub Releases](https://github.com/pHorvat/AI-Usage-Overview/releases), choose **Exit** from the running app's tray menu, and replace your old executable with the downloaded file. Launch it again to use the new version. Keep the same location and filename if you have enabled **Start with Windows**. Your saved preferences remain in place.
 
 ## Controls
 
@@ -229,6 +235,6 @@ The scripts in `build/` handle building (`build-release.bat`), testing (`test.ba
 - **Changes not visible:** exit the existing instance and run the new build; root releases need the release script.
 - **Cleanup reports a running app or locked files:** exit the development/test executable and retry.
 
-The app-server interface can change with Codex updates. Mixed-DPI monitors, Narrator, overflow-tray behavior, Explorer restart, sleep/resume, and browser/network failures still need manual checks on target hardware. There is no installer, signing, automatic updater, or public release pipeline.
+The app-server interface can change with Codex updates. Mixed-DPI monitors, Narrator, overflow-tray behavior, Explorer restart, sleep/resume, and browser/network failures still need manual checks on target hardware. Releases are distributed as standalone executables through GitHub Releases. There is no installer, code signing, or automatic updater.
 
 To uninstall, disable **Start with Windows**, exit, and delete the executable. Delete the local settings/log folder separately if desired.
