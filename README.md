@@ -1,44 +1,162 @@
 # Codex Usage Notch
 
-A small Windows tray app that shows the Codex allowance included with your ChatGPT plan. Hover the tray icon or the top-of-screen strip to see remaining usage and reset times.
+A small Windows app that keeps your remaining Codex allowance visible while you work. It sits in the notification area beside the clock and can show a thin strip at the top of your screen. Hover either indicator to see your remaining percentage and when each usage window resets.
+
+The app shows the Codex subscription allowance reported for your ChatGPT account. It does not show API spending, token totals, or a per-conversation usage breakdown.
+
+**Jump to:** [Get started](#get-started) · [Controls](#controls) · [Reading the card](#reading-the-usage-card) · [How usage is collected](#how-the-app-gets-usage-from-codex) · [Troubleshooting](#troubleshooting) · [Development](#develop-and-test)
+
+Example cards in dark and light mode (sample values):
 
 ![Dark usage card with sample values](Assets/usage-card-dark.png)
 ![Light usage card with sample values](Assets/usage-card-light.png)
 
-## Run
+## Get started
 
-Requires Windows x64, an interactive desktop, and an installed Codex executable. Choose one edition:
+You need Windows x64 with a desktop session, an installed Windows `codex.exe`, and a ChatGPT sign-in that provides Codex allowance. Codex must be able to connect to its service to retrieve fresh usage.
+
+### 1. Choose an edition
 
 | Executable | Requirements |
 | --- | --- |
-| `CodexUsageNotch.exe` | Self-contained; includes .NET |
-| `CodexUsageNotch-lite.exe` | Requires the .NET 8 Windows Desktop Runtime |
+| `CodexUsageNotch.exe` | Includes .NET; choose this if you are unsure which edition to use |
+| `CodexUsageNotch-lite.exe` | Smaller edition for PCs that already have the .NET 8 Windows Desktop Runtime |
 
-Release builds put both executables in the project root. They are ignored by Git; a fresh checkout needs to be built first. Run one edition at a time; a second instance exits quietly.
+Both editions have the same features. Keep your chosen executable in a folder where you want it to stay, especially if you plan to enable startup with Windows.
 
-The app finds `codex.exe` beside itself, in conventional Codex installation folders, on PATH, or in the ChatGPT VS Code extension. It uses your existing Codex login. **Connect ChatGPT** opens browser sign-in when needed; closing the sign-in window cancels the attempt. Attempts expire after five minutes.
+**If you cloned this repository:** the executables are not tracked by Git. Install the .NET 8 SDK or newer, open PowerShell in the project folder, and build them:
+
+```powershell
+.\build\build-release.bat
+```
+
+This creates both executables in the project folder. See [Build a release](#build-a-release) for rebuilding an existing installation.
+
+### 2. Launch and connect
+
+1. Double-click your chosen executable. Look for the tray icon beside the Windows clock; it may be inside the hidden-icons menu.
+2. The app locates Codex and tries to read usage using Codex's existing login. You do not need to keep a Codex terminal or VS Code window open.
+3. If sign-in is needed, use **Connect ChatGPT** and finish signing in in your browser. Closing the app's sign-in window cancels the attempt; an unfinished attempt expires after five minutes.
+4. Hover or click the tray icon to see the usage card. Right-click it and choose **Refresh now** whenever you want a fresh reading.
+
+Run one edition at a time. If an instance is already running, opening another exits quietly.
 
 ## Controls
 
 | Action | Result |
 | --- | --- |
-| Hover the tray icon | Preview after a 500 ms delay following Windows' hover notification; moving away cancels it |
+| Hover the tray icon | Show a preview after a short delay; moving away cancels it |
 | Click the tray icon or press Enter/Space on it | Immediately open the interactive card |
-| Hover the top strip for 850 ms | Show the usage preview |
+| Hover the top strip briefly | Show the usage preview |
 | Move into the preview | Keep it open for reading |
-| Leave the icon and preview | Close after a 400 ms grace period |
+| Move away from the preview and its indicator | Close the preview after a short grace period |
 | Press Escape or click elsewhere | Close the interactive card |
 | Right-click the tray icon | Refresh, connect, toggle the strip or usage ring, configure startup, or exit |
 
-The app follows Windows light/dark mode, high contrast, display DPI, and text size. The strip stays at the top of the primary monitor. Strip visibility and the optional tray ring are remembered. **Start with Windows** is opt-in; keep the executable in a stable location when enabled.
+Use **Show top indicator** to toggle the strip and **Tray usage ring** to add a progress ring around the tray icon. Both preferences are remembered. Enable **Start with Windows** if you want the app to launch when you sign in; it is off by default.
 
-## Usage, updates and privacy
+The app follows Windows light/dark mode, high contrast, display scaling, and text size. The strip stays at the top of the primary monitor's working area.
 
-Values represent subscription allowance, not API spending or token counts. Mint means more than 25% remaining, amber means 11–25%, and red means 10% or less. The card shows the window durations and reset times reported by Codex. An expired reset displays **Awaiting reset update** rather than assuming the allowance has replenished.
+## Reading the usage card
 
-The app owns one local `codex app-server --listen stdio://` subprocess. It requests usage once per minute, receives usage notifications, and refreshes immediately on request. Local countdown repainting sends no requests. Requests time out after 15 seconds; connection failures retry after 5, 15, 30, then 60 seconds. Failed refreshes or readings older than two minutes show **LAST KNOWN**.
+**The percentage is how much allowance you have left.** For example, if Codex reports 31% used, the app displays **69% remaining**.
 
-Authentication stays with Codex. The indicator does not store credentials, account identity, or usage history. Preferences live in `%LocalAppData%\CodexUsageNotch\settings.json`. Sanitized `diagnostics.log` and `diagnostics.log.1` files in the same folder record operation names, timestamps, exception types, and error codes, with roughly 128 KiB per file. They exclude raw responses, sign-in URLs, and credentials. The indicator uploads no logs.
+The main percentage, top strip, and tray ring use Codex's **primary** allowance window. The card also shows the **secondary** window when supplied. Window labels come from the durations Codex reports: for example, 300 minutes becomes a 5-hour window and 10,080 minutes becomes a 7-day window. These durations are not hard-coded assumptions about your plan.
+
+| Color or label | Meaning |
+| --- | --- |
+| Mint/green | More than 25% remaining |
+| Amber | 11–25% remaining |
+| Red | 10% or less remaining |
+| **LAST KNOWN** | A previous reading is still displayed because the connection is not ready or the reading is at least two minutes old |
+| **Awaiting reset update** | The reported reset time has passed; the app is waiting for Codex to confirm the new allowance |
+| **Reset time unavailable** / **Not available** | Codex did not supply that value |
+
+High-contrast mode uses Windows' highlight color. A countdown reaching zero does not change the percentage by itself.
+
+## How the app gets usage from Codex
+
+The indicator asks your installed Codex for account rate limits through its app-server interface. Codex handles authentication and communication with its service; the indicator turns the returned values into the card and progress indicators.
+
+```text
+Codex Usage Notch  <-->  Local Codex app-server  <-->  Codex service
+                  JSON over stdin/stdout       Codex handles sign-in
+```
+
+### 1. Find the Codex executable
+
+The app checks these locations in order and uses the first matching executable:
+
+1. `codex.exe` beside the indicator executable.
+2. `%UserProfile%\.codex\bin\codex.exe`.
+3. `%LocalAppData%\Programs\Codex\codex.exe`, then its `resources\codex.exe` location.
+4. Folders listed in `PATH`.
+5. The OpenAI ChatGPT extension under `%UserProfile%\.vscode\extensions`, then `.vscode-insiders\extensions`. Within each location, newer extension versions are checked first for `bin\windows-x86_64\codex.exe`.
+
+If none is found, it makes a final attempt to start `codex.exe` by name. The locator looks for a native Windows executable; an npm `codex.cmd` launcher alone is insufficient.
+
+### 2. Start a background connection
+
+The app starts its own hidden subprocess with this command:
+
+```text
+codex app-server --listen stdio://
+```
+
+It keeps one connection open for repeated reads, rather than launching Codex for every refresh. Messages are newline-delimited JSON sent through the process's standard input and output; this connection does not open a local HTTP port. The app sends `initialize` with its name and version, waits for the response, and then sends `initialized`.
+
+The subprocess is owned by the indicator and stopped when the indicator exits. A failed connection is recreated when the app retries.
+
+### 3. Request and interpret the allowance
+
+After initialization, the app sends a request like this (the request ID changes):
+
+```json
+{"id": 2, "method": "account/rateLimits/read"}
+```
+
+The parser prefers the `codex` entry in `rateLimitsByLimitId` when present, otherwise it reads `rateLimits`. It rejects entries explicitly identified as a different limit. For the selected entry, it reads:
+
+| Response field | How this app uses it |
+| --- | --- |
+| `primary.usedPercent` / `secondary.usedPercent` | Calculates remaining allowance as `100 - usedPercent` |
+| `windowDurationMins` in each window | Formats the window label in minutes, hours, or days |
+| `resetsAt` in each window | Converts Unix seconds to a timestamp and calculates the reset countdown |
+| `planType` | Retains the plan value in memory when supplied; the current card does not display it |
+
+Missing values stay unavailable instead of being guessed. Percentages must be whole numbers from 0 to 100; invalid readings are rejected. The indicator does not scan conversations, read session logs, count tokens, or send model prompts to obtain these values.
+
+The methods and fields are documented in the [official OpenAI app-server documentation](https://learn.chatgpt.com/docs/app-server). This app's implementation is in [CodexUsageClient.cs](Integration/CodexUsageClient.cs), with response parsing and percentage calculations in [UsageState.cs](Core/UsageState.cs).
+
+### 4. Keep the display current
+
+- **On launch:** request the first reading immediately.
+- **During normal use:** request another reading one minute after a successful refresh and accept `account/rateLimits/updated` notifications from the connected subprocess between reads.
+- **On demand or after sleep:** refresh when you select **Refresh now**, or when Windows resumes.
+- **On failure:** requests time out after 15 seconds. Connection failures retry after 5, 15, 30, then 60 seconds, continuing at 60-second intervals until a read succeeds. A required sign-in needs user interaction.
+
+Notifications can contain partial updates, so omitted fields retain their previous values; a full read replaces the snapshot. When Codex reports an account change, the app clears the old account's reading and requests a fresh one.
+
+Countdowns repaint locally about every 30 seconds without sending usage requests. Display freshness depends on the data Codex returns; the app cannot confirm a reset until it receives an updated reading.
+
+### 5. Let Codex handle sign-in
+
+The app uses the login available to the Codex subprocess. **Connect ChatGPT** starts a fresh subprocess and sends `account/login/start` with `type: "chatgpt"`. Codex returns an HTTPS sign-in URL, which the app opens in your browser. The app waits for `account/login/completed` and requests usage again after a successful sign-in.
+
+The indicator does not read or store Codex's authentication tokens itself. You do not paste an API key into the indicator.
+
+## Privacy and local files
+
+The indicator keeps its current usage reading in memory and does not save credentials, account identity, or usage history. Codex manages its own authentication storage and network requests separately.
+
+The indicator's files live in `%LocalAppData%\CodexUsageNotch`. Paste that path into File Explorer to open it:
+
+| File | Contents |
+| --- | --- |
+| `settings.json` | Top-strip visibility and tray-ring preference |
+| `diagnostics.log`, `diagnostics.log.1` | Sanitized operation names, timestamps, exception types, and error codes; roughly 128 KiB per file |
+
+Diagnostics exclude raw responses, sign-in URLs, and credentials. The indicator uploads no logs. **Start with Windows** is stored separately in your Windows user's startup registry entry.
 
 ## Develop and test
 
