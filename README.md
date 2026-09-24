@@ -158,6 +158,13 @@ dotnet run --project CodexUsageNotch.csproj -c Release -- --render-previews .\bu
 
 ## Build a release
 
+GitHub Actions runs core checks on pushes and pull requests. To publish both Windows executables as a GitHub Release, update the `<Version>` value in `CodexUsageNotch.csproj`, commit and push the change, then push a matching `vX.Y.Z` tag. The tag workflow checks the version, builds both editions, and publishes them as release assets. Desktop UI tests still need an interactive Windows session.
+
+```powershell
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
 Exit the indicator, then run:
 
 ```powershell
