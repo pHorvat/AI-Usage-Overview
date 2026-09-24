@@ -74,7 +74,7 @@ internal sealed record UsageState(UsageSnapshot? Snapshot, ConnectionStatus Stat
 {
     public static UsageState Initial => new(null, ConnectionStatus.Connecting, null);
     public bool IsStale(DateTimeOffset now) => Snapshot is not null &&
-        (Status != ConnectionStatus.Ready || UpdatedAt is null || now - UpdatedAt >= TimeSpan.FromMinutes(2));
+        (Status != ConnectionStatus.Ready || UpdatedAt is null || now - UpdatedAt >= TimeSpan.FromMinutes(20));
     public string StatusText(DateTimeOffset now) => Status switch
     {
         ConnectionStatus.Connecting => "Connecting to Codex…",
@@ -115,9 +115,40 @@ internal sealed class RefreshSchedule(TimeProvider? clock = null)
 {
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private int _failures;
+    private int _unchanged;
+    private UsageSnapshot? _lastSnapshot;
     public DateTimeOffset Next { get; private set; } = DateTimeOffset.MinValue;
     public bool Due => _clock.GetUtcNow() >= Next;
-    public void Succeeded() { _failures = 0; Next = _clock.GetUtcNow().AddMinutes(1); }
-    public void Failed() { int[] delays = [5, 15, 30, 60]; Next = _clock.GetUtcNow().AddSeconds(delays[_failures]); _failures = Math.Min(_failures + 1, 3); }
+    public void Succeeded(UsageSnapshot snapshot)
+    {
+        _failures = 0;
+        _unchanged = snapshot == _lastSnapshot ? Math.Min(_unchanged + 1, 4) : 0;
+        _lastSnapshot = snapshot;
+        int[] minutes = [1, 2, 5, 10, 15];
+        var now = _clock.GetUtcNow();
+        Next = now.AddMinutes(minutes[_unchanged]);
+        CapAtReset(snapshot, now);
+    }
+    public void Changed(UsageSnapshot snapshot)
+    {
+        if (snapshot == _lastSnapshot) return;
+        _lastSnapshot = snapshot;
+        _unchanged = -1;
+        var now = _clock.GetUtcNow();
+        if (Next > now.AddMinutes(1)) Next = now.AddMinutes(1);
+        CapAtReset(snapshot, now);
+    }
+    private void CapAtReset(UsageSnapshot snapshot, DateTimeOffset now)
+    {
+        var reset = new[] { snapshot.Primary?.ResetsAt, snapshot.Secondary?.ResetsAt }
+            .Where(value => value > now).Min();
+        if (reset is { } at && at.AddSeconds(30) < Next) Next = at.AddSeconds(30);
+    }
+    public void Failed()
+    {
+        int[] delays = [15, 30, 60, 120, 300];
+        Next = _clock.GetUtcNow().AddSeconds(delays[_failures]);
+        _failures = Math.Min(_failures + 1, delays.Length - 1);
+    }
     public void Now() => Next = DateTimeOffset.MinValue;
 }

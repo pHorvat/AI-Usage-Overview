@@ -21,6 +21,14 @@ internal static class UiTests
                 Check(strip.Top == primaryWork.Top && strip.Left == primaryWork.Left + (primaryWork.Width - strip.Width) / 2,
                     $"strip starts at top center (actual {strip.Left},{strip.Top})");
                 Check(GetForegroundWindow() == foregroundBeforeStrip, "strip startup does not take focus");
+                using var rival = new Form { TopMost = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual,
+                    Location = new Point(primaryWork.Left + 20, primaryWork.Top + 20), Size = new Size(30, 30) };
+                rival.Show(); Pump(80);
+                var foregroundBeforeRestore = GetForegroundWindow();
+                strip.RestoreTopMost(); Pump(80);
+                Check(IsAbove(strip.Handle, rival.Handle), "strip returns above other topmost windows");
+                Check(GetForegroundWindow() == foregroundBeforeRestore, "restoring strip order does not take focus");
+                rival.Close();
                 strip.Hide(); strip.Show(); Pump(80);
                 Check(strip.Top == primaryWork.Top && strip.Left == primaryWork.Left + (primaryWork.Width - strip.Width) / 2,
                     "strip stays at top center after hide/show");
@@ -108,17 +116,21 @@ internal static class UiTests
     }
     private static T Field<T>(object target, string name) =>
         (T)target.GetType().GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(target)!;
+    private static bool IsAbove(IntPtr higher, IntPtr lower)
+    {
+        for (var window = GetWindow(higher, 2); window != IntPtr.Zero; window = GetWindow(window, 2))
+            if (window == lower) return true;
+        return false;
+    }
     private static void TestApplication(Action<bool, string> check)
     {
         const string sample = "{\"rateLimits\":{\"primary\":{\"usedPercent\":62}}}";
-        var initial = new Tests.FakeTransport(sample);
-        var completed = new Tests.FakeTransport(sample)
+        var initial = new Tests.FakeTransport(sample)
         {
             AfterLogin = "{\"method\":\"account/login/completed\",\"params\":{\"loginId\":\"test-login\",\"success\":true}}"
         };
-        var pending = new Tests.FakeTransport(sample) { HangLogin = true };
         var failed = new Tests.FakeTransport(sample) { LoginResult = "null" };
-        var transports = new Queue<Tests.FakeTransport>([initial, completed, pending, failed]);
+        var transports = new Queue<Tests.FakeTransport>([initial, failed]);
         // Keep synthetic hover callbacks independent of Shell overflow-icon placement.
         var work = Screen.PrimaryScreen!.WorkingArea;
         var icon = new Rectangle(work.Left + 100, work.Bottom - 100, 24, 24);
@@ -151,13 +163,23 @@ internal static class UiTests
             initial.Push("{\"method\":\"account/rateLimits/updated\",\"params\":{\"rateLimits\":{\"primary\":{\"usedPercent\":80}}}}");
             Until(() => State().Snapshot?.Primary?.Remaining == 20);
             check(Field<RefreshSchedule>(context, "_schedule").Next == next, "usage notification preserves the periodic full-read deadline");
+            initial.ReadErrorsRemaining = 1;
+            Field<ToolStripMenuItem>(context, "_refresh").PerformClick();
+            Until(() => State().Status == ConnectionStatus.Retrying);
+            check(Field<LoginDialog?>(context, "_login") is null && !initial.Disposed,
+                "one authentication error retries without restarting Codex or opening sign-in");
+            Field<ToolStripMenuItem>(context, "_refresh").PerformClick();
+            Until(() => State().Status == ConnectionStatus.Ready);
             connect.PerformClick();
-            Until(() => completed.Methods.Contains("account/rateLimits/read") && State().Status == ConnectionStatus.Ready);
+            Until(() => initial.Methods.Count(method => method == "account/rateLimits/read") >= 4 && State().Status == ConnectionStatus.Ready);
             check(Field<LoginDialog?>(context, "_login") is null, "immediate sign-in success closes the dialog and refreshes usage");
+            check(!initial.Disposed, "sign-in reuses the existing Codex connection");
+            initial.AfterLogin = null;
+            initial.HangLogin = true;
             connect.PerformClick();
-            Until(() => pending.Methods.Contains("account/login/start"));
+            Until(() => initial.Methods.Count(method => method == "account/login/start") >= 2);
             Field<LoginDialog>(context, "_login").Close();
-            Until(() => pending.Disposed && State().Status == ConnectionStatus.NeedsLogin);
+            Until(() => initial.Disposed && State().Status == ConnectionStatus.NeedsLogin);
             check(Field<LoginDialog?>(context, "_login") is null, "closing during a sign-in request cancels it without reopening the dialog");
             connect.PerformClick();
             Until(() => State().Status == ConnectionStatus.LoginFailed);
@@ -175,5 +197,6 @@ internal static class UiTests
     }
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, int message, IntPtr w, IntPtr l);
 }

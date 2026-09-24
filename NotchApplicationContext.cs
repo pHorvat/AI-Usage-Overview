@@ -28,10 +28,12 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private UsageState _state = UsageState.Initial;
     private AppTheme _theme = AppTheme.Current;
     private DateTimeOffset _nextPaint;
+    private DateTimeOffset _nextTopMost;
     private bool _busy;
     private bool _exit;
     private bool _disposed;
     private bool _autoLoginOffered;
+    private int _authFailures;
     private string? _iconKey;
     private Task _operation = Task.CompletedTask;
     private Task _loginCompletion = Task.CompletedTask;
@@ -52,7 +54,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
         {
             _preferences.StripVisible = !_preferences.StripVisible;
             _visibility.Checked = _preferences.StripVisible;
-            if (_preferences.StripVisible) { _strip.Reposition(); _strip.Show(); } else _strip.Hide();
+            if (_preferences.StripVisible) { _strip.Reposition(); _strip.Show(); _strip.RestoreTopMost(); } else _strip.Hide();
             SavePreferences();
         };
         _ring.Click += (_, _) => { _preferences.RingEnabled = !_preferences.RingEnabled; _ring.Checked = _preferences.RingEnabled; SavePreferences(); Present(); };
@@ -131,7 +133,9 @@ internal sealed class NotchApplicationContext : ApplicationContext
         client.UsageUpdated += read => Post(() =>
         {
             if (!ReferenceEquals(client, _client) || read.AccountGeneration != client.AccountGeneration || read.ConnectionGeneration != client.ConnectionGeneration || _loginId is not null) return;
-            _state = new(read.Update.Apply(_state.Snapshot, read.Full), ConnectionStatus.Ready, DateTimeOffset.UtcNow);
+            var snapshot = read.Update.Apply(_state.Snapshot, read.Full);
+            if (!read.Full) _schedule.Changed(snapshot);
+            _state = new(snapshot, ConnectionStatus.Ready, DateTimeOffset.UtcNow);
             Present();
         });
         client.AccountChanged += generation => Post(() =>
@@ -161,7 +165,8 @@ internal sealed class NotchApplicationContext : ApplicationContext
             var read = await client.ReadRateLimitsAsync(_shutdown.Token);
             if (_exit || !ReferenceEquals(client, _client) || read.AccountGeneration != client.AccountGeneration || read.ConnectionGeneration != client.ConnectionGeneration) return;
             if (!client.Connected) throw new IOException("Codex disconnected.");
-            _schedule.Succeeded();
+            _authFailures = 0;
+            _schedule.Succeeded(read.Update.Apply(_state.Snapshot, true));
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception error)
@@ -169,12 +174,16 @@ internal sealed class NotchApplicationContext : ApplicationContext
             if (_exit) return;
             Diagnostics.Write("usage-refresh", error);
             _schedule.Failed();
-            if (error is RpcFailure { NeedsLogin: true })
+            if (error is RpcFailure { NeedsLogin: true } && ++_authFailures >= 2)
             {
                 _state = new(null, ConnectionStatus.NeedsLogin, null);
                 offerLogin = !_autoLoginOffered; _autoLoginOffered = true;
             }
-            else _state = _state with { Status = error is System.ComponentModel.Win32Exception { NativeErrorCode: 2 } ? ConnectionStatus.MissingCodex : ConnectionStatus.Retrying };
+            else
+            {
+                if (error is not RpcFailure { NeedsLogin: true }) _authFailures = 0;
+                _state = _state with { Status = error is System.ComponentModel.Win32Exception { NativeErrorCode: 2 } ? ConnectionStatus.MissingCodex : ConnectionStatus.Retrying };
+            }
         }
         finally { _busy = false; if (!_exit) Present(); }
         if (offerLogin) Post(StartLogin);
@@ -204,10 +213,6 @@ internal sealed class NotchApplicationContext : ApplicationContext
                 };
             }
             _login.SetPending(); _login.Show();
-            // A new subprocess isolates a cancelled/failed login and its delayed notifications.
-            var old = _client; _client = null;
-            if (old is not null) await old.DisposeAsync();
-            if (_exit || attempt != _loginAttempt) return;
             var client = Client();
             var login = await client.StartLoginAsync(_shutdown.Token);
             if (_exit || attempt != _loginAttempt) return;
@@ -235,6 +240,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
         _loginId = null; _loginStarted = null;
         if (success)
         {
+            _authFailures = 0;
             _state = UsageState.Initial;
             var dialog = _login; _login = null; dialog?.Close(); dialog?.Dispose();
             _schedule.Now();
@@ -267,6 +273,8 @@ internal sealed class NotchApplicationContext : ApplicationContext
         if (_loginStarted is { } began && DateTimeOffset.UtcNow - began > TimeSpan.FromMinutes(5))
         { _login?.SetFailure(); _operation = CancelLoginAsync(); }
         if (DateTimeOffset.UtcNow >= _nextPaint) { Present(); _nextPaint = DateTimeOffset.UtcNow.AddSeconds(30); }
+        if (DateTimeOffset.UtcNow >= _nextTopMost)
+        { _strip.RestoreTopMost(); _nextTopMost = DateTimeOffset.UtcNow.AddSeconds(5); }
         if (_schedule.Due && _state.Status is not (ConnectionStatus.NeedsLogin or ConnectionStatus.SigningIn or ConnectionStatus.LoginFailed)) StartRefresh();
     }
     private void OpenPopup(bool interactive)
@@ -290,11 +298,12 @@ internal sealed class NotchApplicationContext : ApplicationContext
     {
         _theme = AppTheme.Current; _theme.Apply(_menu);
         _login?.UpdateTheme(_theme);
-        _strip.Reposition(); Present();
+        _strip.Reposition(); _strip.RestoreTopMost(); Present();
     }
     private void OnResumed()
     {
         if (_exit || _state.Status is ConnectionStatus.NeedsLogin or ConnectionStatus.SigningIn or ConnectionStatus.LoginFailed) return;
+        _strip.RestoreTopMost();
         _schedule.Now(); _state = _state with { Status = ConnectionStatus.Retrying }; Present(); StartRefresh();
     }
     internal async Task ExitAsync()

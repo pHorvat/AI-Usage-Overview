@@ -74,7 +74,7 @@ The main percentage, top strip, and tray ring use Codex's **primary** allowance 
 | Mint/green | More than 25% remaining |
 | Amber | 11–25% remaining |
 | Red | 10% or less remaining |
-| **LAST KNOWN** | A previous reading is still displayed because the connection is not ready or the reading is at least two minutes old |
+| **LAST KNOWN** | A previous reading is still displayed because the connection is not ready or the reading is at least 20 minutes old |
 | **Awaiting reset update** | The reported reset time has passed; the app is waiting for Codex to confirm the new allowance |
 | **Reset time unavailable** / **Not available** | Codex did not supply that value |
 
@@ -82,74 +82,40 @@ High-contrast mode uses Windows' highlight color. A countdown reaching zero does
 
 ## How the app gets usage from Codex
 
-The indicator asks your installed Codex for account rate limits through its app-server interface. Codex handles authentication and communication with its service; the indicator turns the returned values into the card and progress indicators.
+**The usage comes from Codex's service, through your installed Codex executable.** The indicator asks Codex for the allowance associated with your ChatGPT sign-in. Codex handles the authenticated network request and returns the usage information to the indicator.
 
 ```text
-Codex Usage Notch  <-->  Local Codex app-server  <-->  Codex service
-                  JSON over stdin/stdout       Codex handles sign-in
+Codex Usage Notch  <-->  Codex running on your PC  <-->  Codex service
+                        Uses your ChatGPT sign-in
 ```
 
-### 1. Find the Codex executable
+### Connect to your installed Codex
 
-The app checks these locations in order and uses the first matching executable:
+The app automatically looks for `codex.exe` beside its own executable, in common Codex installation folders, on `PATH`, and in the OpenAI ChatGPT extension for VS Code or VS Code Insiders.
 
-1. `codex.exe` beside the indicator executable.
-2. `%UserProfile%\.codex\bin\codex.exe`.
-3. `%LocalAppData%\Programs\Codex\codex.exe`, then its `resources\codex.exe` location.
-4. Folders listed in `PATH`.
-5. The OpenAI ChatGPT extension under `%UserProfile%\.vscode\extensions`, then `.vscode-insiders\extensions`. Within each location, newer extension versions are checked first for `bin\windows-x86_64\codex.exe`.
-
-If none is found, it makes a final attempt to start `codex.exe` by name. The locator looks for a native Windows executable; an npm `codex.cmd` launcher alone is insufficient.
-
-### 2. Start a background connection
-
-The app starts its own hidden subprocess with this command:
+It then starts its own hidden Codex background process using:
 
 ```text
 codex app-server --listen stdio://
 ```
 
-It keeps one connection open for repeated reads, rather than launching Codex for every refresh. Messages are newline-delimited JSON sent through the process's standard input and output; this connection does not open a local HTTP port. The app sends `initialize` with its name and version, waits for the response, and then sends `initialized`.
+This is Codex's app-server interface, which lets another application request information from Codex. The indicator exchanges JSON messages with that process through standard input and output (local communication channels between the two programs). You do not need to keep a Codex terminal or VS Code window open. The background process stays available for refreshes and stops when you exit the indicator.
 
-The subprocess is owned by the indicator and stopped when the indicator exits. A failed connection is recreated when the app retries.
+### Use your ChatGPT sign-in
 
-### 3. Request and interpret the allowance
+Codex uses its existing login when available. If you need to sign in, **Connect ChatGPT** asks Codex to start browser sign-in through `account/login/start`. Codex provides the sign-in link, and the indicator opens it in your browser. Once Codex confirms that sign-in succeeded, the indicator requests your usage.
 
-After initialization, the app sends a request like this (the request ID changes):
+Authentication is handled by Codex. The indicator does not read or store Codex's authentication tokens itself, and you do not paste an API key into it.
 
-```json
-{"id": 2, "method": "account/rateLimits/read"}
-```
+### Ask Codex for the current allowance
 
-The parser prefers the `codex` entry in `rateLimitsByLimitId` when present, otherwise it reads `rateLimits`. It rejects entries explicitly identified as a different limit. For the selected entry, it reads:
+After connecting, the indicator sends `account/rateLimits/read` to the local Codex process. Codex retrieves the account's rate-limit information from its service and returns the usage percentages, allowance-window durations, and reset times that are available for your account.
 
-| Response field | How this app uses it |
-| --- | --- |
-| `primary.usedPercent` / `secondary.usedPercent` | Calculates remaining allowance as `100 - usedPercent` |
-| `windowDurationMins` in each window | Formats the window label in minutes, hours, or days |
-| `resetsAt` in each window | Converts Unix seconds to a timestamp and calculates the reset countdown |
-| `planType` | Retains the plan value in memory when supplied; the current card does not display it |
+The indicator requests usage on launch. If readings stay the same, it gradually slows its checks from once a minute to once every 15 minutes; changes return it to frequent checks. It also checks shortly after a reported reset and accepts `account/rateLimits/updated` notifications from the connected Codex process. **Refresh now** requests a fresh reading, and connection failures are retried automatically.
 
-Missing values stay unavailable instead of being guessed. Percentages must be whole numbers from 0 to 100; invalid readings are rejected. The indicator does not scan conversations, read session logs, count tokens, or send model prompts to obtain these values.
+These are account allowance readings supplied by Codex. The indicator does not scan your conversations, read session logs, count tokens, or send model prompts to obtain them.
 
-The methods and fields are documented in the [official OpenAI app-server documentation](https://learn.chatgpt.com/docs/app-server). This app's implementation is in [CodexUsageClient.cs](Integration/CodexUsageClient.cs), with response parsing and percentage calculations in [UsageState.cs](Core/UsageState.cs).
-
-### 4. Keep the display current
-
-- **On launch:** request the first reading immediately.
-- **During normal use:** request another reading one minute after a successful refresh and accept `account/rateLimits/updated` notifications from the connected subprocess between reads.
-- **On demand or after sleep:** refresh when you select **Refresh now**, or when Windows resumes.
-- **On failure:** requests time out after 15 seconds. Connection failures retry after 5, 15, 30, then 60 seconds, continuing at 60-second intervals until a read succeeds. A required sign-in needs user interaction.
-
-Notifications can contain partial updates, so omitted fields retain their previous values; a full read replaces the snapshot. When Codex reports an account change, the app clears the old account's reading and requests a fresh one.
-
-Countdowns repaint locally about every 30 seconds without sending usage requests. Display freshness depends on the data Codex returns; the app cannot confirm a reset until it receives an updated reading.
-
-### 5. Let Codex handle sign-in
-
-The app uses the login available to the Codex subprocess. **Connect ChatGPT** starts a fresh subprocess and sends `account/login/start` with `type: "chatgpt"`. Codex returns an HTTPS sign-in URL, which the app opens in your browser. The app waits for `account/login/completed` and requests usage again after a successful sign-in.
-
-The indicator does not read or store Codex's authentication tokens itself. You do not paste an API key into the indicator.
+For technical reference, see the [official OpenAI app-server documentation](https://learn.chatgpt.com/docs/app-server) or this app's connection code in [CodexUsageClient.cs](Integration/CodexUsageClient.cs).
 
 ## Privacy and local files
 

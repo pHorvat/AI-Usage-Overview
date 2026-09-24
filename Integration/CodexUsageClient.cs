@@ -74,6 +74,7 @@ internal sealed class CodexUsageClient : IAsyncDisposable
         public LoginStart? Login { get; set; }
         public Task Reader { get; set; } = Task.CompletedTask;
         public volatile bool Dead;
+        public bool Ready;
     }
     private readonly Func<IRpcTransport> _factory;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -150,6 +151,7 @@ internal sealed class CodexUsageClient : IAsyncDisposable
                     clientInfo = new { name = "codex-usage-notch", version = typeof(CodexUsageClient).Assembly.GetName().Version?.ToString(3) }
                 }, result => result.Clone(), linked.Token);
                 await session.Transport.WriteAsync("{\"method\":\"initialized\"}", linked.Token);
+                session.Ready = true;
             }
             var result = await action(_session, linked.Token);
             if (_session.Dead) throw new IOException("Codex disconnected.");
@@ -160,9 +162,12 @@ internal sealed class CodexUsageClient : IAsyncDisposable
             if (entered) await CloseSessionAsync();
             throw new TimeoutException("Codex request timed out.");
         }
-        catch
+        catch (Exception error)
         {
-            if (entered) await CloseSessionAsync();
+            // A server-side RPC failure does not invalidate the stdio connection.
+            // In particular, an auth error should leave the same Codex process available for login.
+            if (entered && (error is not RpcFailure || _session is not { Dead: false, Ready: true }))
+                await CloseSessionAsync();
             throw;
         }
         finally { if (entered) _gate.Release(); }

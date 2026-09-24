@@ -63,7 +63,7 @@ internal static class Tests
             {
                 var now = DateTimeOffset.UtcNow;
                 var state = new UsageState(Parse(Full).Apply(null, true), ConnectionStatus.Ready, now);
-                Check(!state.IsStale(now.AddSeconds(119)) && state.IsStale(now.AddMinutes(2)));
+                Check(!state.IsStale(now.AddMinutes(19)) && state.IsStale(now.AddMinutes(20)));
                 Check((state with { Status = ConnectionStatus.Retrying }).IsStale(now));
                 Check((state with { Status = ConnectionStatus.Retrying }).StatusText(now).Contains("Last known"));
             });
@@ -76,13 +76,30 @@ internal static class Tests
                 Check(UsageText.Window(new(0, null, 720)) == "12-hour window");
                 Check(UsageText.Window(new(0, null, 15)) == "15-minute window");
             });
-            Run("backoff uses 5, 15, 30, 60 seconds and resets", () =>
+            Run("unchanged usage slows polling and a changed reading resets it", () =>
             {
                 var clock = new FakeClock(); var schedule = new RefreshSchedule(clock);
-                foreach (var delay in new[] { 5, 15, 30, 60, 60 })
+                var snapshot = new UsageSnapshot(new UsageWindow(20, null, 300), null, null);
+                foreach (var minutes in new[] { 1, 2, 5, 10, 15, 15 })
+                { schedule.Succeeded(snapshot); Check(schedule.Next == clock.GetUtcNow().AddMinutes(minutes)); clock.Advance(TimeSpan.FromMinutes(minutes)); }
+                schedule.Succeeded(snapshot);
+                schedule.Changed(snapshot with { Primary = new UsageWindow(25, null, 300) });
+                Check(schedule.Next == clock.GetUtcNow().AddMinutes(1));
+                schedule.Succeeded(snapshot with { Primary = new UsageWindow(25, null, 300) });
+                Check(schedule.Next == clock.GetUtcNow().AddMinutes(1));
+                schedule.Succeeded(snapshot with { Primary = new UsageWindow(30, null, 300) });
+                Check(schedule.Next == clock.GetUtcNow().AddMinutes(1));
+            });
+            Run("polling checks soon after an upcoming reset and failures back off", () =>
+            {
+                var clock = new FakeClock(); var schedule = new RefreshSchedule(clock);
+                var snapshot = new UsageSnapshot(new UsageWindow(20, clock.GetUtcNow().AddMinutes(3), 300), null, null);
+                schedule.Succeeded(snapshot); schedule.Succeeded(snapshot); schedule.Succeeded(snapshot);
+                Check(schedule.Next == clock.GetUtcNow().AddMinutes(3).AddSeconds(30));
+                foreach (var delay in new[] { 15, 30, 60, 120, 300, 300 })
                 { schedule.Failed(); Check(schedule.Next == clock.GetUtcNow().AddSeconds(delay)); clock.Advance(TimeSpan.FromSeconds(delay)); Check(schedule.Due); }
-                schedule.Succeeded(); Check(schedule.Next == clock.GetUtcNow().AddMinutes(1));
-                schedule.Failed(); Check(schedule.Next == clock.GetUtcNow().AddSeconds(5));
+                schedule.Succeeded(snapshot);
+                schedule.Failed(); Check(schedule.Next == clock.GetUtcNow().AddSeconds(15));
             });
             Run("settings migration preserves unknown fields", () =>
             {
@@ -125,6 +142,19 @@ internal static class Tests
                 await ThrowsAsync<TimeoutException>(() => read);
                 Check(first.Disposed);
                 var next = await client.ReadRateLimitsAsync(default); Check(next.Update.Primary is not null && attempts == 2);
+            });
+            await RunAsync("RPC errors keep the session available for retry and login", async () =>
+            {
+                var transport = new FakeTransport(Full) { HangReads = true }; var starts = 0;
+                await using var client = new CodexUsageClient(() => { starts++; return transport; });
+                var read = client.ReadRateLimitsAsync(default);
+                await Until(() => transport.LastReadId > 0);
+                transport.Push("{\"id\":" + transport.LastReadId + ",\"error\":{\"message\":\"authentication required\"}}");
+                try { await read; throw new Exception("Expected auth error"); }
+                catch (RpcFailure error) { Check(error.NeedsLogin); }
+                Check(client.Connected && !transport.Disposed);
+                var login = await client.StartLoginAsync(default);
+                Check(login.Id == "test-login" && starts == 1 && !transport.Disposed);
             });
             await RunAsync("shutdown cancels pending requests", async () =>
             {
@@ -309,6 +339,7 @@ internal static class Tests
         private readonly Channel<string> _lines = Channel.CreateUnbounded<string>();
         public System.Collections.Concurrent.ConcurrentBag<string> Methods { get; } = new();
         public bool HangReads { get; set; }
+        public int ReadErrorsRemaining { get; set; }
         public bool HangLogin { get; set; }
         public string? AfterRead { get; set; }
         public string? AfterLogin { get; set; }
@@ -325,7 +356,17 @@ internal static class Tests
             using var doc = JsonDocument.Parse(line); var root = doc.RootElement; var method = root.GetProperty("method").GetString()!; Methods.Add(method);
             if (root.TryGetProperty("id", out var id))
             {
-                if (method == "account/rateLimits/read") { LastReadId = id.GetInt32(); if (HangReads) return Task.CompletedTask; }
+                if (method == "account/rateLimits/read")
+                {
+                    LastReadId = id.GetInt32();
+                    if (HangReads) return Task.CompletedTask;
+                    if (ReadErrorsRemaining > 0)
+                    {
+                        ReadErrorsRemaining--;
+                        Push("{\"id\":" + id.GetInt32() + ",\"error\":{\"message\":\"authentication required\"}}");
+                        return Task.CompletedTask;
+                    }
+                }
                 if (method == "account/login/start" && HangLogin) return Task.CompletedTask;
                 Push("{\"id\":" + id.GetInt32() + ",\"result\":" + (method == "initialize" ? "{}" : method == "account/login/start" ? LoginResult : result) + "}");
                 if (method == "account/rateLimits/read" && AfterRead is { } update) Push(update);

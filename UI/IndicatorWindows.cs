@@ -22,8 +22,13 @@ internal sealed class StripForm : Form
         MouseLeave += (_, _) => _hover.Stop();
         MouseDown += (_, _) => HoverRequested?.Invoke();
         DpiChanged += (_, _) => Reposition();
-        Shown += (_, _) => Reposition();
+        Shown += (_, _) => { Reposition(); RestoreTopMost(); };
         Reposition();
+    }
+    public void RestoreTopMost()
+    {
+        if (Visible && !SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0213))
+            Diagnostics.Write("strip-topmost", new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
     }
     public void Present(UsageState state, AppTheme theme)
     {
@@ -50,6 +55,8 @@ internal sealed class StripForm : Form
         e.Graphics.FillRectangle(brush, 0, 0, width, Height);
     }
     protected override void Dispose(bool disposing) { if (disposing) _hover.Dispose(); base.Dispose(disposing); }
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
 }
 
 internal sealed class CardPopup : Form
