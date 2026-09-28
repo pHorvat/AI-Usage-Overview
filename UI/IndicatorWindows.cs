@@ -27,7 +27,7 @@ internal sealed class StripForm : Form
     {
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        AutoScaleMode = AutoScaleMode.None; DoubleBuffered = true; Cursor = Cursors.SizeWE;
+        AutoScaleMode = AutoScaleMode.None; DoubleBuffered = true; Cursor = Cursors.Hand;
         AccessibleName = "Codex usage indicator";
         _hover.Tick += (_, _) => { _hover.Stop(); if (_dragStart is null && Bounds.Contains(Cursor.Position)) HoverRequested?.Invoke(); };
         MouseEnter += (_, _) => { if (_dragStart is null) _hover.Start(); };
