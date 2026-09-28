@@ -83,10 +83,27 @@ internal sealed record UsageState(UsageSnapshot? Snapshot, ConnectionStatus Stat
         ConnectionStatus.SigningIn => "Finish signing in in your browser.",
         ConnectionStatus.LoginFailed => "Sign-in did not complete. Try connecting again.",
         _ when IsStale(now) => "Last known usage · " + UsageText.Age(UpdatedAt, now) + " · retrying",
-        ConnectionStatus.Retrying => "Codex unavailable. Retrying shortly…",
+        ConnectionStatus.Retrying => "Allowance request interrupted. Reconnecting to Codex automatically.",
         _ when Snapshot?.Primary is null => Snapshot?.Secondary is null ? "No allowance window supplied by Codex." : "Primary allowance unavailable.",
         _ => "Updated " + UsageText.Age(UpdatedAt, now)
     };
+}
+internal sealed record RecoveryInfo(string Cause, bool Trying, DateTimeOffset? NextAttempt)
+{
+    public static string CauseFor(Exception error) => error switch
+    {
+        TimeoutException => "Codex did not answer the allowance request in time.",
+        RpcFailure { NeedsLogin: true } => "Codex reported that the ChatGPT sign-in needs attention.",
+        RpcFailure => "Codex rejected the allowance request.",
+        IOException => "The local Codex app-server connection was interrupted.",
+        InvalidDataException => "Codex returned allowance data the app could not read.",
+        _ => "The allowance request did not complete."
+    };
+    public string Action => Trying
+        ? "Now: checking the Codex connection and requesting your allowance."
+        : NextAttempt is { } at
+            ? $"Next: check the Codex connection and request your allowance at {at.ToLocalTime():HH:mm:ss}."
+            : "Next: check the Codex connection and request your allowance.";
 }
 internal static class UsageText
 {
@@ -110,6 +127,31 @@ internal static class UsageText
         : now - at < TimeSpan.FromMinutes(1) ? "just now"
         : now - at < TimeSpan.FromHours(1) ? $"{Math.Max(1, (int)(now - at.Value).TotalMinutes)}m ago"
         : $"{Math.Max(1, (int)(now - at.Value).TotalHours)}h ago";
+}
+internal static class UsageTooltip
+{
+    public static string Format(UsageState state, DateTimeOffset now)
+    {
+        var title = state.IsStale(now) ? "Codex usage (last known)" : "Codex usage";
+        var lines = new List<string> { title };
+        if (state.Snapshot is not { } snapshot || snapshot.Primary is null && snapshot.Secondary is null)
+            lines.Add(state.StatusText(now));
+        else
+        {
+            if (snapshot.Primary is { } primary) AddWindow(primary);
+            if (snapshot.Secondary is { } secondary) AddWindow(secondary);
+        }
+        return string.Join("\n", lines);
+
+        void AddWindow(UsageWindow window)
+        {
+            var summary = $"{UsageText.Window(window)}: {window.Remaining}% left";
+            var reset = UsageText.Reset(window.ResetsAt, now);
+            var full = summary + " · " + reset;
+            if (string.Join("\n", lines).Length + 1 + full.Length <= 127) lines.Add(full);
+            else if (string.Join("\n", lines).Length + 1 + summary.Length <= 127) lines.Add(summary);
+        }
+    }
 }
 internal sealed class RefreshSchedule(TimeProvider? clock = null)
 {

@@ -12,8 +12,6 @@ internal sealed class TrayHost : NativeWindow, IDisposable
     private bool _added;
     private bool _disposed;
     private Rectangle? _lastBounds;
-    public event Action? HoverOpened;
-    public event Action? HoverClosed;
     public event Action? Selected;
     public event Action? ContextRequested;
     public event Action? EnvironmentChanged;
@@ -71,8 +69,6 @@ internal sealed class TrayHost : NativeWindow, IDisposable
         {
             switch ((int)(message.LParam.ToInt64() & 0xffff))
             {
-                case 0x406: HoverOpened?.Invoke(); break;
-                case 0x407: HoverClosed?.Invoke(); break;
                 case 0x400: case 0x401: Selected?.Invoke(); break;
                 case 0x007B: ContextRequested?.Invoke(); break;
             }
@@ -82,7 +78,7 @@ internal sealed class TrayHost : NativeWindow, IDisposable
     private IconData Data() => new()
     {
         Size = (uint)Marshal.SizeOf<IconData>(), Window = Handle, Id = 1,
-        Flags = 1 | 2 | 4, Message = Callback, Icon = _icon?.Handle ?? IntPtr.Zero,
+        Flags = 1 | 2 | 4 | 0x80, Message = Callback, Icon = _icon?.Handle ?? IntPtr.Zero,
         Tip = _text, Info = "", Title = ""
     };
     public void Dispose()

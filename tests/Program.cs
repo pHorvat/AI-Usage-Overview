@@ -110,13 +110,47 @@ internal static class Tests
                 {
                     File.WriteAllText(path, "{\"taskbarUsageRingEnabled\":true,\"futurePreference\":42}");
                     var preferences = new UserPreferences(path); preferences.Load();
-                    Check(preferences.RingEnabled && preferences.StripVisible);
-                    preferences.StripVisible = false; Check(preferences.Save());
-                    var next = new UserPreferences(path); next.Load(); Check(!next.StripVisible && next.RingEnabled);
+                    Check(preferences.RingEnabled && preferences.StripVisible && preferences.StripPosition == 0.5);
+                    preferences.StripVisible = false; preferences.StripPosition = 0.37; Check(preferences.Save());
+                    var next = new UserPreferences(path); next.Load();
+                    Check(!next.StripVisible && next.RingEnabled && next.StripPosition == 0.37);
                     Check(File.ReadAllText(path).Contains("futurePreference"));
+                    File.WriteAllText(path, "{\"stripAlignment\":\"Right\"}");
+                    var legacy = new UserPreferences(path); legacy.Load(); Check(legacy.StripPosition == 1);
+                    File.WriteAllText(path, "{\"stripAlignment\":\"Unrecognized\"}");
+                    var invalid = new UserPreferences(path); invalid.Load(); Check(invalid.StripPosition == 0.5);
                     File.WriteAllText(path, "corrupt"); var corrupt = new UserPreferences(path); corrupt.Load(); Check(corrupt.StripVisible && !corrupt.RingEnabled);
                 }
                 finally { File.Delete(path); Directory.Delete(directory); }
+            });
+            Run("recovery details explain the failed step and next attempt", () =>
+            {
+                var retry = new RecoveryInfo(RecoveryInfo.CauseFor(new TimeoutException()), false,
+                    DateTimeOffset.Parse("2026-09-28T12:00:15Z"));
+                Check(retry.Cause.Contains("did not answer") && retry.Action.Contains("request your allowance at"));
+                Check(new RecoveryInfo(retry.Cause, true, retry.NextAttempt).Action.Contains("requesting your allowance"));
+                Check(RecoveryInfo.CauseFor(new IOException()).Contains("connection was interrupted"));
+            });
+            Run("strip position covers the top edge and survives a resize", () =>
+            {
+                var work = new Rectangle(-1920, -200, 1920, 1040);
+                const int width = 210;
+                Check(StripPlacement.Place(work, width, 0).X == work.Left);
+                Check(StripPlacement.Place(work, width, 1).X == work.Right - width);
+                var left = StripPlacement.Place(work, width, 0.37).X;
+                var position = StripPlacement.PositionFor(work, width, left);
+                Check(StripPlacement.Place(work, width, position).X == left);
+                Check(StripPlacement.Place(new Rectangle(0, 0, 1000, 700), width, position).X > 0);
+            });
+            Run("native tray tooltip includes allowance details within the shell limit", () =>
+            {
+                var now = DateTimeOffset.Parse("2026-09-28T12:00:00Z");
+                var state = new UsageState(new UsageSnapshot(
+                    new UsageWindow(25, now.AddHours(2), 300),
+                    new UsageWindow(60, now.AddDays(3), 10080), null), ConnectionStatus.Ready, now);
+                var tip = UsageTooltip.Format(state, now);
+                Check(tip.Contains("75% left") && tip.Contains("40% left") && tip.Contains("Resets in") && tip.Length <= 127);
+                Check(UsageTooltip.Format(state with { Status = ConnectionStatus.Retrying }, now).Contains("last known"));
             });
             Run("popup clamps on negative-coordinate and edge monitors", () =>
             {

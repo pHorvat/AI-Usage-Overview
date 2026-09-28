@@ -39,7 +39,7 @@ This creates both executables in the project folder. See [Build a release](#buil
 1. Double-click your chosen executable. Look for the tray icon beside the Windows clock; it may be inside the hidden-icons menu.
 2. The app locates Codex and tries to read usage using Codex's existing login. You do not need to keep a Codex terminal or VS Code window open.
 3. If sign-in is needed, use **Connect ChatGPT** and finish signing in in your browser. Closing the app's sign-in window cancels the attempt; an unfinished attempt expires after five minutes.
-4. Hover or click the tray icon to see the usage card. Right-click it and choose **Refresh now** whenever you want a fresh reading.
+4. Hover the tray icon for a Windows tooltip with your allowance details, or click it to open the full usage card. Right-click it and choose **Refresh now** whenever you want a fresh reading.
 
 Run one edition at a time. If an instance is already running, opening another exits quietly.
 
@@ -51,15 +51,17 @@ Download your preferred edition from [GitHub Releases](https://github.com/pHorva
 
 | Action | Result |
 | --- | --- |
-| Hover the tray icon | Show a preview after a short delay; moving away cancels it |
+| Hover the tray icon | Show a standard Windows tooltip with current allowance details |
 | Click the tray icon or press Enter/Space on it | Immediately open the interactive card |
 | Hover the top strip briefly | Show the usage preview |
+| Click the top strip | Open the usage card with Refresh, Connect, and Move top indicator controls |
+| Drag the top strip | Move it directly along the top edge |
 | Move into the preview | Keep it open for reading |
 | Move away from the preview and its indicator | Close the preview after a short grace period |
 | Press Escape or click elsewhere | Close the interactive card |
-| Right-click the tray icon | Refresh, connect, toggle the strip or usage ring, configure startup, or exit |
+| Right-click the tray icon | Refresh, open **Move top indicator…**, connect, toggle the strip or usage ring, view the version, configure startup, or exit |
 
-Use **Show top indicator** to toggle the strip and **Tray usage ring** to add a progress ring around the tray icon. Both preferences are remembered. Enable **Start with Windows** if you want the app to launch when you sign in; it is off by default.
+Use **Show top indicator** to toggle the strip, **Move top indicator…** to choose an exact position with a slider, and **Tray usage ring** to add a progress ring around the tray icon. Clicking the strip opens the usage card; its **Move top indicator** button is below Refresh. Dragging the strip still moves it directly. The slider previews the position and Cancel restores the previous one. These preferences are remembered. The current app version appears near the bottom of the tray menu. Enable **Start with Windows** if you want the app to launch when you sign in; it is off by default.
 
 The app follows Windows light/dark mode, high contrast, display scaling, and text size. The strip stays at the top of the primary monitor's working area.
 
@@ -125,7 +127,7 @@ The indicator's files live in `%LocalAppData%\CodexUsageNotch`. Paste that path 
 
 | File | Contents |
 | --- | --- |
-| `settings.json` | Top-strip visibility and tray-ring preference |
+| `settings.json` | Top-strip visibility and position, and tray-ring preference |
 | `diagnostics.log`, `diagnostics.log.1` | Sanitized operation names, timestamps, exception types, and error codes; roughly 128 KiB per file |
 
 Diagnostics exclude raw responses, sign-in URLs, and credentials. The indicator uploads no logs. **Start with Windows** is stored separately in your Windows user's startup registry entry.
@@ -150,7 +152,7 @@ dotnet run --project tests\CodexUsageNotch.Tests.csproj -c Release -- --live
 
 Tests use a console runner, so use `dotnet run`, not `dotnet test`. Failed checks return a nonzero exit code. Core tests cover parsing and connection behavior; desktop checks cover tray, popup, hover, and sign-in interactions. Builds never run tests. The test script compiles and runs the tests without publishing or replacing releases. Add `-Smoke` to also check both existing root release executables; it does not rebuild them. Successful smoke reports are removed; failed reports remain for diagnosis.
 
-For UI layout work, generate 324 sample images and bounds/overlap checks across three palettes, three DPI scales, three text sizes, and twelve states:
+For UI layout work, generate 351 sample images and bounds/overlap checks across three palettes, three DPI scales, three text sizes, and thirteen states:
 
 ```powershell
 dotnet run --project CodexUsageNotch.csproj -c Release -- --render-previews .\build\previews
@@ -204,7 +206,7 @@ The scripts in `build/` handle building (`build-release.bat`), testing (`test.ba
 ## Troubleshooting
 
 - **Codex not found:** install Codex or expose its underlying Windows `codex.exe` on PATH, then Refresh. An npm `.cmd` launcher alone is insufficient.
-- **Last known usage:** check Codex's connection and select Refresh. The previous reading remains visible during retries.
+- **Connection interrupted:** the card explains which step failed, whether a request is in progress, and when the next automatic attempt is due. Refresh retries immediately. The previous reading remains visible when one is available.
 - **Sign-in failed:** select Connect ChatGPT again to request a fresh link.
 - **Tray icon hidden:** check Windows' notification overflow area.
 - **Changes not visible:** exit the existing instance and run the new build; root releases need the release script.

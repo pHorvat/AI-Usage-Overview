@@ -3,6 +3,8 @@ using System.Text.Json.Nodes;
 
 namespace CodexUsageNotch;
 
+internal enum StripAlignment { Left, Center, Right }
+
 internal sealed class UserPreferences(string? path = null)
 {
     public static string DataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexUsageNotch");
@@ -10,6 +12,7 @@ internal sealed class UserPreferences(string? path = null)
     private JsonObject _data = new();
     public bool RingEnabled { get; set; }
     public bool StripVisible { get; set; } = true;
+    public double StripPosition { get; set; } = 0.5;
     public void Load()
     {
         try
@@ -17,6 +20,12 @@ internal sealed class UserPreferences(string? path = null)
             _data = JsonNode.Parse(File.ReadAllText(_path)) as JsonObject ?? new();
             RingEnabled = ReadBool("taskbarUsageRingEnabled", false);
             StripVisible = ReadBool("stripVisible", true);
+            var legacyAlignment = _data["stripAlignment"] is JsonValue value && value.TryGetValue<string>(out var name)
+                && Enum.TryParse<StripAlignment>(name, true, out var alignment) && Enum.IsDefined(alignment)
+                ? alignment : StripAlignment.Center;
+            StripPosition = _data["stripPosition"] is JsonValue position && position.TryGetValue<double>(out var fraction)
+                && double.IsFinite(fraction) && fraction is >= 0 and <= 1
+                ? fraction : (double)legacyAlignment / 2;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         { Diagnostics.Write("settings-read", e); }
@@ -29,6 +38,7 @@ internal sealed class UserPreferences(string? path = null)
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             _data["taskbarUsageRingEnabled"] = RingEnabled;
             _data["stripVisible"] = StripVisible;
+            _data["stripPosition"] = StripPosition;
             File.WriteAllText(_path + ".tmp", _data.ToJsonString());
             File.Move(_path + ".tmp", _path, true);
             return true;

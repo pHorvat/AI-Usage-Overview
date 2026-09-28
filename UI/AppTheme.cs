@@ -49,10 +49,23 @@ internal sealed record AppTheme(Color Surface, Color Foreground, Color Muted, Co
     }
     public void Apply(ContextMenuStrip menu)
     {
-        menu.Renderer = HighContrast ? new ToolStripSystemRenderer() : new ToolStripProfessionalRenderer(new ThemeTable(this));
+        menu.Renderer = new ThemeRenderer(this);
         menu.BackColor = Surface;
         menu.ForeColor = Foreground;
-        foreach (ToolStripItem item in menu.Items) item.ForeColor = Foreground;
+        ApplyItems(menu.Items);
+    }
+    private void ApplyItems(ToolStripItemCollection items)
+    {
+        foreach (ToolStripItem item in items)
+        {
+            item.ForeColor = Foreground;
+            if (item is ToolStripMenuItem { HasDropDownItems: true } parent)
+            {
+                parent.DropDown.BackColor = Surface;
+                parent.DropDown.ForeColor = Foreground;
+                ApplyItems(parent.DropDownItems);
+            }
+        }
     }
     private sealed class ThemeTable(AppTheme theme) : ProfessionalColorTable
     {
@@ -67,5 +80,19 @@ internal sealed record AppTheme(Color Surface, Color Foreground, Color Muted, Co
         public override Color SeparatorLight => theme.Surface;
         public override Color CheckBackground => theme.Track;
         public override Color CheckSelectedBackground => theme.Track;
+    }
+    private sealed class ThemeRenderer(AppTheme theme) : ToolStripProfessionalRenderer(new ThemeTable(theme))
+    {
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            var color = e.Item.Selected ? theme.HighContrast ? SystemColors.Highlight : theme.Track : theme.Surface;
+            using var brush = new SolidBrush(color);
+            e.Graphics.FillRectangle(brush, new Rectangle(Point.Empty, e.Item.Size));
+        }
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Selected && theme.HighContrast ? SystemColors.HighlightText : theme.Foreground;
+            base.OnRenderItemText(e);
+        }
     }
 }

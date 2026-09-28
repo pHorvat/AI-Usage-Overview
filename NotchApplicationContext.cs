@@ -8,7 +8,6 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private readonly TrayHost _tray = new();
     private readonly ContextMenuStrip _menu = new();
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 1000 };
-    private readonly System.Windows.Forms.Timer _trayHoverDelay = new() { Interval = 500 };
     private readonly UserPreferences _preferences = new();
     private readonly RefreshSchedule _schedule = new();
     private readonly CancellationTokenSource _shutdown = new();
@@ -17,11 +16,13 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _startup = new("Start with Windows");
     private readonly ToolStripMenuItem _connect = new("Connect ChatGPT…");
     private readonly ToolStripMenuItem _refresh = new("Refresh now");
+    private readonly ToolStripMenuItem _move = new("Move top indicator…");
     private readonly string? _smokeReport;
     private readonly Func<CodexUsageClient> _clientFactory;
     private readonly Func<Rectangle> _trayBounds;
     private CodexUsageClient? _client;
     private LoginDialog? _login;
+    private PositionDialog? _positionDialog;
     private string? _loginId;
     private DateTimeOffset? _loginStarted;
     private int _loginAttempt;
@@ -34,6 +35,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private bool _disposed;
     private bool _autoLoginOffered;
     private int _authFailures;
+    private string _retryCause = "The allowance request through Codex did not complete.";
     private string? _iconKey;
     private Task _operation = Task.CompletedTask;
     private Task _loginCompletion = Task.CompletedTask;
@@ -46,9 +48,11 @@ internal sealed class NotchApplicationContext : ApplicationContext
         _dispatch.CreateControl();
         if (smokeReport is null) _preferences.Load();
         _visibility.Checked = _preferences.StripVisible;
+        _strip.Position = _preferences.StripPosition;
         _ring.Checked = _preferences.RingEnabled;
         _startup.Checked = smokeReport is null && StartupRegistration.IsEnabled();
         _refresh.Click += (_, _) => StartRefresh();
+        _move.Click += (_, _) => OpenPositionDialog();
         _connect.Click += (_, _) => StartLogin();
         _visibility.Click += (_, _) =>
         {
@@ -64,26 +68,15 @@ internal sealed class NotchApplicationContext : ApplicationContext
             else MessageBox.Show("Windows could not update your startup preference.", "Codex Usage Notch", MessageBoxButtons.OK, MessageBoxIcon.Information);
         };
         var exit = new ToolStripMenuItem("Exit"); exit.Click += async (_, _) => await ExitAsync();
-        _menu.Items.AddRange([_refresh, _connect, new ToolStripSeparator(), _visibility, _ring, _startup, new ToolStripSeparator(), exit]);
+        var version = new ToolStripLabel($"Version {typeof(NotchApplicationContext).Assembly.GetName().Version?.ToString(3) ?? "unknown"}");
+        _menu.Items.AddRange([_refresh, _move, _connect, new ToolStripSeparator(), _visibility, _ring, _startup, new ToolStripSeparator(), version, exit]);
         _menu.Closed += (_, _) => _tray.ReturnFocus();
-        _trayHoverDelay.Tick += (_, _) =>
-        {
-            _trayHoverDelay.Stop();
-            if (!_exit && !_menu.Visible && !_popup.Interactive && _trayBounds().Contains(Cursor.Position)) OpenPopup(false);
-        };
-        _tray.HoverOpened += () =>
-        {
-            if (!_exit && !_menu.Visible && !_popup.Visible && !_trayHoverDelay.Enabled) _trayHoverDelay.Start();
-        };
-        _tray.HoverClosed += () => _trayHoverDelay.Stop();
         _tray.Selected += () =>
         {
-            _trayHoverDelay.Stop();
             if (_popup.Visible && _popup.Interactive) _popup.Dismiss(); else OpenPopup(true);
         };
         _tray.ContextRequested += () =>
         {
-            _trayHoverDelay.Stop();
             _popup.Dismiss(); _tray.FocusHost();
             var anchor = _tray.IconBounds();
             var point = PopupPlacement.Place(anchor, _menu.GetPreferredSize(Size.Empty), Screen.FromRectangle(anchor).WorkingArea);
@@ -94,11 +87,20 @@ internal sealed class NotchApplicationContext : ApplicationContext
         _tray.ExitRequested += () => _ = ExitAsync();
         _strip.HoverRequested += () =>
         {
-            if (_popup.Interactive || _menu.Visible) return;
-            _popup.Present(_state, _theme); _popup.Open(() => _strip.Bounds, true, false);
+            if (_popup.Interactive || _menu.Visible || _positionDialog is not null) return;
+            PresentPopup(); _popup.Open(() => _strip.Bounds, true, false);
         };
+        _strip.Selected += () =>
+        {
+            if (_menu.Visible || _positionDialog is not null) return;
+            PresentPopup();
+            _popup.Open(() => _strip.Bounds, true, true);
+        };
+        _strip.DragStarted += () => _popup.Dismiss();
+        _strip.PositionChanged += SetStripPosition;
         _popup.RefreshRequested += StartRefresh;
         _popup.ConnectRequested += () => { _popup.Dismiss(); StartLogin(); };
+        _popup.MoveRequested += () => { _popup.Dismiss(); _dispatch.BeginInvoke(new Action(OpenPositionDialog)); };
         _popup.ReturnFocusRequested += () => _tray.ReturnFocus();
         _theme.Apply(_menu);
         _strip.Present(_state, _theme);
@@ -118,6 +120,35 @@ internal sealed class NotchApplicationContext : ApplicationContext
     private void SavePreferences()
     {
         if (!_preferences.Save()) MessageBox.Show("Your display preference works for this session, but could not be saved.", "Codex Usage Notch", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+    private void SetStripPosition(double position)
+    {
+        _strip.Position = position;
+        _preferences.StripPosition = _strip.Position;
+        SavePreferences();
+    }
+    private void OpenPositionDialog()
+    {
+        if (_exit || _positionDialog is not null) return;
+        _popup.Dismiss(); _menu.Close();
+        var originalPosition = _strip.Position;
+        var wasVisible = _strip.Visible;
+        if (!wasVisible) _strip.Show();
+        _strip.RestoreTopMost();
+        var work = (Screen.PrimaryScreen ?? Screen.FromPoint(Cursor.Position)).WorkingArea;
+        using var dialog = new PositionDialog(originalPosition, work.Width - _strip.Width, _theme);
+        _positionDialog = dialog;
+        dialog.PositionPreviewed += position => _strip.Position = position;
+        try
+        {
+            if (dialog.ShowDialog() == DialogResult.OK) SetStripPosition(dialog.Position);
+            else _strip.Position = originalPosition;
+        }
+        finally
+        {
+            _positionDialog = null;
+            if (!wasVisible) _strip.Hide();
+        }
     }
     private void Post(Action action)
     {
@@ -148,6 +179,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
         {
             if (!ReferenceEquals(client, _client) || generation != client.ConnectionGeneration) return;
             if (_loginId is not null || _state.Status is ConnectionStatus.NeedsLogin or ConnectionStatus.SigningIn or ConnectionStatus.LoginFailed) return;
+            _retryCause = "The local Codex app-server connection closed.";
             _state = _state with { Status = ConnectionStatus.Retrying };
             if (!_busy) _schedule.Failed();
             Present();
@@ -173,6 +205,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
         {
             if (_exit) return;
             Diagnostics.Write("usage-refresh", error);
+            _retryCause = RecoveryInfo.CauseFor(error);
             _schedule.Failed();
             if (error is RpcFailure { NeedsLogin: true } && ++_authFailures >= 2)
             {
@@ -266,7 +299,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
         if (_smokeReport is not null)
         {
             var work = Screen.PrimaryScreen!.WorkingArea;
-            var stripAtTopCenter = _strip.Top == work.Top && _strip.Left == work.Left + (work.Width - _strip.Width) / 2;
+            var stripAtTopCenter = _strip.Location == StripPlacement.Place(work, _strip.Width, 0.5);
             File.WriteAllText(_smokeReport, $"trayRegistered={_tray.Registered}\nstripAtTopCenter={stripAtTopCenter}\ncardWidth={_popup.Card.Width}\ncardHeight={_popup.Card.Height}\npreviewInteractive={_popup.Interactive}\n");
             _ = ExitAsync(); return;
         }
@@ -278,17 +311,17 @@ internal sealed class NotchApplicationContext : ApplicationContext
         if (_schedule.Due && _state.Status is not (ConnectionStatus.NeedsLogin or ConnectionStatus.SigningIn or ConnectionStatus.LoginFailed)) StartRefresh();
     }
     private void OpenPopup(bool interactive)
-    { _popup.Present(_state, _theme); _popup.Open(_trayBounds, false, interactive); }
+    { PresentPopup(); _popup.Open(_trayBounds, false, interactive); }
+    private void PresentPopup() => _popup.Present(_state, _theme, _state.Status == ConnectionStatus.Retrying
+        ? new RecoveryInfo(_retryCause, _busy, _schedule.Next == DateTimeOffset.MinValue ? null : _schedule.Next)
+        : null);
     private void Present()
     {
         _strip.Present(_state, _theme);
-        if (_popup.Visible) _popup.Present(_state, _theme);
+        if (_popup.Visible) PresentPopup();
         _refresh.Enabled = !_busy && _loginId is null;
         _connect.Enabled = !_busy;
-        var primary = _state.Snapshot?.Primary;
-        var stale = _state.IsStale(DateTimeOffset.UtcNow);
-        var text = primary is null ? "Codex usage · " + _state.StatusText(DateTimeOffset.UtcNow)
-            : $"Codex: {primary.Remaining}% left · {UsageText.Window(primary)}" + (stale ? " · last known" : "");
+        var text = UsageTooltip.Format(_state, DateTimeOffset.UtcNow);
         var iconTheme = AppTheme.Taskbar;
         var key = $"{text}|{_preferences.RingEnabled}|{iconTheme}";
         if (_iconKey != key)
@@ -298,19 +331,22 @@ internal sealed class NotchApplicationContext : ApplicationContext
     {
         _theme = AppTheme.Current; _theme.Apply(_menu);
         _login?.UpdateTheme(_theme);
+        _positionDialog?.UpdateTheme(_theme);
         _strip.Reposition(); _strip.RestoreTopMost(); Present();
     }
     private void OnResumed()
     {
         if (_exit || _state.Status is ConnectionStatus.NeedsLogin or ConnectionStatus.SigningIn or ConnectionStatus.LoginFailed) return;
         _strip.RestoreTopMost();
+        _retryCause = "Windows resumed. The allowance reading needs to be checked again.";
         _schedule.Now(); _state = _state with { Status = ConnectionStatus.Retrying }; Present(); StartRefresh();
     }
     internal async Task ExitAsync()
     {
         if (_exit) return;
-        _exit = true; _tick.Stop(); _trayHoverDelay.Stop(); _shutdown.Cancel();
+        _exit = true; _tick.Stop(); _shutdown.Cancel();
         _popup.Dismiss(); _strip.Hide(); _menu.Close();
+        _positionDialog?.Close();
         _login?.Close();
         var client = _client; _client = null;
         try
@@ -329,7 +365,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
             _disposed = true;
             _exit = true; _shutdown.Cancel();
             _client?.Abort();
-            _tick.Dispose(); _trayHoverDelay.Dispose(); _login?.Dispose(); _popup.Dispose(); _strip.Dispose(); _menu.Dispose(); _tray.Dispose(); _dispatch.Dispose();
+            _tick.Dispose(); _login?.Dispose(); _popup.Dispose(); _strip.Dispose(); _menu.Dispose(); _tray.Dispose(); _dispatch.Dispose();
             _shutdown.Dispose();
         }
         base.Dispose(disposing);

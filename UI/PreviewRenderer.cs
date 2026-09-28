@@ -16,6 +16,7 @@ internal static class PreviewRenderer
             ["empty"] = Sample with { Snapshot = new(new(100, now.AddMinutes(-1), 300), null, null) },
             ["full"] = Sample with { Snapshot = new(new(0, now.AddDays(120), 10080), new(0, null, 720), null) },
             ["stale"] = Sample with { Status = ConnectionStatus.Retrying, UpdatedAt = now.AddMinutes(-12) },
+            ["retrying"] = new(null, ConnectionStatus.Retrying, null),
             ["connecting"] = UsageState.Initial,
             ["missing"] = new(null, ConnectionStatus.MissingCodex, null),
             ["login"] = new(null, ConnectionStatus.NeedsLogin, null),
@@ -32,7 +33,8 @@ internal static class PreviewRenderer
         foreach (var (scenario, state) in states)
         {
             using var card = new UsageCard();
-            card.Present(state, theme, scale, textScale, now);
+            card.Present(state, theme, scale, textScale, now, state.Status == ConnectionStatus.Retrying
+                ? new RecoveryInfo("Codex did not answer the allowance request in time.", false, now.AddSeconds(15)) : null);
             using var image = new Bitmap(card.Width, card.Height);
             card.DrawToBitmap(image, card.ClientRectangle);
             var file = $"{name}-{scale * 100:0}-text{textScale * 100:0}-{scenario}.png";

@@ -22,7 +22,7 @@ internal sealed class UsageCard : Control
         AccessibleName = "Codex usage";
         TabStop = false;
     }
-    public void Present(UsageState state, AppTheme theme, float scale, float textScale, DateTimeOffset now)
+    public void Present(UsageState state, AppTheme theme, float scale, float textScale, DateTimeOffset now, RecoveryInfo? recovery = null)
     {
         _state = state; _theme = theme; _scale = scale; _textScale = textScale;
         foreach (var font in _fonts) font.Dispose();
@@ -83,7 +83,20 @@ internal sealed class UsageCard : Control
                 y += Add(UsageText.Reset(secondary.ResetsAt, now), small, pad, y, inner, theme.Muted) + Px(16);
             }
         }
-        y += Add(state.StatusText(now), small, pad, y, inner, theme.Muted);
+        if (state.Status == ConnectionStatus.Retrying)
+        {
+            if (state.Snapshot is not null)
+            {
+                y += Add($"Last known reading: {UsageText.Age(state.UpdatedAt, now)}.", small, pad, y, inner, theme.Muted);
+                y += Px(8);
+            }
+            y += Add(recovery?.Cause ?? "The allowance request through Codex did not complete.", body, pad, y, inner, theme.Foreground);
+            y += Px(9);
+            y += Add(recovery?.Action ?? "Next: reconnect to Codex and request your allowance.", small, pad, y, inner, theme.Muted);
+            y += Px(7);
+            y += Add("Request: account/rateLimits/read via local Codex app-server. Refresh retries now.", small, pad, y, inner, theme.Muted);
+        }
+        else y += Add(state.StatusText(now), small, pad, y, inner, theme.Muted);
         Size = new Size(width, y + Px(18));
         AccessibleDescription = string.Join(". ", _runs.Select(x => x.Text));
         Invalidate();

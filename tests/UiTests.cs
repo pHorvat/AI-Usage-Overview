@@ -18,8 +18,28 @@ internal static class UiTests
                 var primaryWork = Screen.PrimaryScreen!.WorkingArea;
                 var foregroundBeforeStrip = GetForegroundWindow();
                 strip.Show(); Pump(80);
-                Check(strip.Top == primaryWork.Top && strip.Left == primaryWork.Left + (primaryWork.Width - strip.Width) / 2,
+                Check(strip.Location == StripPlacement.Place(primaryWork, strip.Width, 0.5),
                     $"strip starts at top center (actual {strip.Left},{strip.Top})");
+                strip.Position = 0;
+                Check(strip.Left == primaryWork.Left && strip.Top == primaryWork.Top, "strip moves to the left edge");
+                strip.Position = 1;
+                Check(strip.Right == primaryWork.Right && strip.Top == primaryWork.Top, "strip moves to the right edge");
+                strip.Position = 0.37;
+                Check(strip.Left == StripPlacement.Place(primaryWork, strip.Width, 0.37).X, "strip accepts a custom top position");
+                strip.Position = 0.5;
+                var dragged = 0;
+                strip.PositionChanged += _ => dragged++;
+                var dragStart = new Point(strip.Left + strip.Width / 2, strip.Top + Math.Min(2, strip.Height - 1));
+                strip.BeginDrag(dragStart);
+                strip.ContinueDrag(new Point(dragStart.X + 180, dragStart.Y));
+                strip.EndDrag(true);
+                Check(strip.Position > 0.5 && dragged == 1, $"dragging moves and commits the strip position ({strip.Position:F3}, events {dragged})");
+                var selections = 0;
+                strip.Selected += () => selections++;
+                strip.BeginDrag(dragStart);
+                strip.EndDrag(true);
+                Check(selections == 1, "clicking the strip selects the usage card");
+                strip.Position = 0.5;
                 Check(GetForegroundWindow() == foregroundBeforeStrip, "strip startup does not take focus");
                 using var rival = new Form { TopMost = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual,
                     Location = new Point(primaryWork.Left + 20, primaryWork.Top + 20), Size = new Size(30, 30) };
@@ -30,16 +50,58 @@ internal static class UiTests
                 Check(GetForegroundWindow() == foregroundBeforeRestore, "restoring strip order does not take focus");
                 rival.Close();
                 strip.Hide(); strip.Show(); Pump(80);
-                Check(strip.Top == primaryWork.Top && strip.Left == primaryWork.Left + (primaryWork.Width - strip.Width) / 2,
+                Check(strip.Location == StripPlacement.Place(primaryWork, strip.Width, 0.5),
                     "strip stays at top center after hide/show");
+            }
+            using (var dialog = new PositionDialog(0.5, 1000, AppTheme.Current))
+            {
+                var slider = Field<TrackBar>(dialog, "_slider");
+                var previewed = 0d;
+                dialog.PositionPreviewed += position => previewed = position;
+                slider.Value = 730;
+                Check(dialog.Position == 0.73 && previewed == 0.73, "position slider previews a precise top location");
+                Check(dialog.AcceptButton is Button && dialog.CancelButton is Button, "position dialog has save and cancel actions");
+            }
+            foreach (var theme in new[] { AppTheme.Light, AppTheme.Night })
+            {
+                using var menu = new ContextMenuStrip();
+                var item = new ToolStripMenuItem("Hover contrast");
+                menu.Items.Add(item); theme.Apply(menu);
+                menu.Show(new Point(100, 100)); item.Select(); Pump(30);
+                using var image = new Bitmap(menu.Width, menu.Height);
+                menu.DrawToBitmap(image, new Rectangle(Point.Empty, menu.Size));
+                var sampleColor = image.GetPixel(menu.Width - 5, item.Bounds.Top + item.Height / 2);
+                Check(sampleColor.ToArgb() == theme.Track.ToArgb(), "menu hover uses a readable theme color");
+                menu.Close();
+            }
+            using (var stripCard = new CardPopup())
+            {
+                var stripWork = Screen.PrimaryScreen!.WorkingArea;
+                var stripAnchor = new Rectangle(stripWork.Left + stripWork.Width / 2 - 100, stripWork.Top, 200, 6);
+                stripCard.Present(new UsageState(null, ConnectionStatus.Retrying, null), AppTheme.Current,
+                    new RecoveryInfo("Codex did not answer the allowance request in time.", false, DateTimeOffset.UtcNow.AddSeconds(15)));
+                stripCard.Open(() => stripAnchor, true, true); Pump(80);
+                Check(stripCard.Card.AccessibleDescription!.Contains("check the Codex connection") &&
+                    stripCard.Card.AccessibleDescription.Contains("account/rateLimits/read"),
+                    "interrupted card explains the next step and request");
+                var actions = stripCard.Controls.OfType<Button>().ToArray();
+                var refresh = actions.Single(button => button.Text == "Refresh");
+                var move = actions.Single(button => button.Text == "Move top indicator");
+                Check(stripCard.Interactive && move.Visible && move.Top >= refresh.Bottom,
+                    "clicked strip card shows Move top indicator below Refresh");
+                var requested = 0;
+                stripCard.MoveRequested += () => requested++;
+                move.PerformClick();
+                Check(requested == 1, "strip card Move button requests position controls");
+                stripCard.Dismiss();
             }
             using var tray = new TrayHost();
             tray.Update(TrayIconRenderer.Create(PreviewRenderer.Sample, AppTheme.Current, true), "Codex UI test");
             Check(tray.Registered, "native tray registered");
-            var hovered = 0; var selected = 0; var context = 0; var closed = 0;
-            tray.HoverOpened += () => hovered++; tray.Selected += () => selected++; tray.ContextRequested += () => context++; tray.HoverClosed += () => closed++;
-            foreach (var code in new[] { 0x406, 0x407, 0x400, 0x401, 0x7B }) SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | code));
-            Check(hovered == 1 && closed == 1 && selected == 2 && context == 1, "version-4 mouse, keyboard and menu routing");
+            var selected = 0; var context = 0;
+            tray.Selected += () => selected++; tray.ContextRequested += () => context++;
+            foreach (var code in new[] { 0x400, 0x401, 0x7B }) SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | code));
+            Check(selected == 2 && context == 1, "version-4 mouse, keyboard and menu routing");
             var resumed = 0; var environment = 0;
             tray.Resumed += () => resumed++; tray.EnvironmentChanged += () => environment++;
             SendMessage(tray.Handle, 0x0218, (IntPtr)0x12, IntPtr.Zero);
@@ -64,9 +126,13 @@ internal static class UiTests
             popup.Open(() => anchor, false, true); Pump(80);
             Check(popup.Visible && popup.Interactive && popup.ContainsFocus, "click opens keyboard-accessible card");
             var buttons = popup.Controls.OfType<Button>().ToArray();
-            Check(buttons.Length == 2 && buttons.All(x => x.Visible && x.TabStop), "actions are keyboard accessible");
+            Check(buttons.Length == 3 && buttons.All(x => x.Visible && x.TabStop), "actions are keyboard accessible");
             var refreshed = 0; popup.RefreshRequested += () => refreshed++;
             buttons.Single(x => x.Text == "Refresh").PerformClick(); Check(refreshed == 1, "refresh action routes once");
+            var moved = 0; popup.MoveRequested += () => moved++;
+            var moveButton = buttons.Single(x => x.Text == "Move top indicator");
+            Check(moveButton.Top >= buttons.Single(x => x.Text == "Refresh").Bottom, "move action sits below refresh");
+            moveButton.PerformClick(); Check(moved == 1, "move action routes once");
             // Post to the focused control's message queue so WinForms runs key preprocessing.
             // SendKeys can target the invoking terminal when the desktop focus changes mid-test.
             PostMessage(popup.ActiveControl!.Handle, 0x100, (IntPtr)Keys.Escape, IntPtr.Zero);
@@ -139,26 +205,23 @@ internal static class UiTests
         var connect = Field<ToolStripMenuItem>(context, "_connect");
         try
         {
+            var menu = Field<ContextMenuStrip>(context, "_menu");
+            check(menu.Items.OfType<ToolStripMenuItem>().Any(item => item.Text == "Move top indicator…"),
+                "tray menu offers position controls next to refresh");
+            check(menu.Items.OfType<ToolStripMenuItem>().All(item => item.Text != "Top indicator position"),
+                "tray menu omits the redundant position submenu");
+            check(menu.Items.OfType<ToolStripLabel>().Any(item => item.Text == $"Version {typeof(NotchApplicationContext).Assembly.GetName().Version?.ToString(3)}"),
+                "tray menu displays the installed version");
             Until(() => State().Status == ConnectionStatus.Ready);
             var tray = Field<TrayHost>(context, "_tray");
             var popup = Field<CardPopup>(context, "_popup");
             Cursor.Position = new Point(icon.Left + icon.Width / 2, icon.Top + icon.Height / 2);
             SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x406));
-            Pump(200);
-            check(!popup.Visible, "passing over the tray does not immediately open the preview");
-            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x407));
-            Pump(400);
-            check(!popup.Visible, "leaving the tray cancels the pending preview");
-            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x406));
-            Until(() => popup.Visible);
-            check(popup.Visible && !popup.Interactive, "remaining over the tray opens the delayed preview");
-            popup.Dismiss();
-            SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x406));
+            Pump(650);
+            check(!popup.Visible, "hovering over the tray leaves the native tooltip in control");
             SendMessage(tray.Handle, TrayHost.Callback, IntPtr.Zero, (IntPtr)((1 << 16) | 0x400));
-            check(popup.Visible && popup.Interactive, "clicking during the hover delay opens the interactive card immediately");
+            check(popup.Visible && popup.Interactive, "clicking the tray opens the interactive card");
             popup.Dismiss();
-            Pump(600);
-            check(!popup.Visible, "clicking cancels the pending hover preview");
             var next = Field<RefreshSchedule>(context, "_schedule").Next;
             initial.Push("{\"method\":\"account/rateLimits/updated\",\"params\":{\"rateLimits\":{\"primary\":{\"usedPercent\":80}}}}");
             Until(() => State().Snapshot?.Primary?.Remaining == 20);
