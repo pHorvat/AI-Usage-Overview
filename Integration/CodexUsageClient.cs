@@ -65,6 +65,7 @@ internal sealed record UsageRead(UsageUpdate Update, int AccountGeneration, int 
 internal sealed class CodexUsageClient : IAsyncDisposable
 {
     private sealed record PendingRequest(Action<JsonElement> Complete, Action<Exception> Fail);
+    private sealed class AccountChangedDuringReadException() : IOException("Account changed during read.") { }
     private sealed class Session(IRpcTransport transport, int generation)
     {
         public int Generation { get; } = generation;
@@ -101,16 +102,27 @@ internal sealed class CodexUsageClient : IAsyncDisposable
     {
         return await ExecuteAsync(async (session, ct) =>
         {
-            var generation = AccountGeneration;
-            return await RequestAsync(session, "account/rateLimits/read", null, result =>
+            for (var attempt = 0; ; attempt++)
             {
-                if (generation != AccountGeneration) throw new IOException("Account changed during read.");
-                var read = new UsageRead(UsageUpdate.Parse(result), generation, session.Generation, Full: true);
-                _acceptUpdates = true;
-                // Publish on the reader before later notifications can overtake this snapshot.
-                UsageUpdated?.Invoke(read);
-                return read;
-            }, ct);
+                var generation = AccountGeneration;
+                try
+                {
+                    return await RequestAsync(session, "account/rateLimits/read", null, result =>
+                    {
+                        if (generation != AccountGeneration) throw new AccountChangedDuringReadException();
+                        var read = new UsageRead(UsageUpdate.Parse(result), generation, session.Generation, Full: true);
+                        _acceptUpdates = true;
+                        // Publish on the reader before later notifications can overtake this snapshot.
+                        UsageUpdated?.Invoke(read);
+                        return read;
+                    }, ct);
+                }
+                catch (AccountChangedDuringReadException) when (attempt < 2)
+                {
+                    // Codex can announce the account during startup after the first read begins.
+                    // Ask again on the same connection so the old account's reply is never shown.
+                }
+            }
         }, token);
     }
     public async Task<LoginStart> StartLoginAsync(CancellationToken token) => await ExecuteAsync(async (session, ct) =>

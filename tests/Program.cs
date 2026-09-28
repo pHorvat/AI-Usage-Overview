@@ -19,7 +19,18 @@ internal static class Tests
             Console.WriteLine($"PASS live read: primary={snapshot.Primary is not null}, secondary={snapshot.Secondary is not null}");
             return 0;
         }
-        catch (Exception error) { Console.Error.WriteLine("Live read failed: " + error.GetType().Name); return 1; }
+        catch (Exception error)
+        {
+            var reason = error is IOException ? error.Message switch
+            {
+                "Account changed during read." => "account changed during read",
+                "Codex disconnected." => "app-server disconnected",
+                "Could not start Codex." => "app-server did not start",
+                _ => "other I/O error"
+            } : "other error";
+            Console.Error.WriteLine($"Live read failed: {error.GetType().Name} ({reason})");
+            return 1;
+        }
     }
     private static async Task<int> RunAll()
     {
@@ -197,15 +208,22 @@ internal static class Tests
                 await Until(() => transport.Methods.Contains("account/rateLimits/read"));
                 await client.DisposeAsync(); await ThrowsAsync<OperationCanceledException>(() => read); Check(transport.Disposed);
             });
-            await RunAsync("account change invalidates an in-flight read", async () =>
+            await RunAsync("startup account update retries without publishing a stale read", async () =>
             {
-                var transport = new FakeTransport(Full) { HangReads = true }; await using var client = new CodexUsageClient(() => transport);
+                var transport = new FakeTransport(Full) { HangReads = true }; var starts = 0;
+                await using var client = new CodexUsageClient(() => { starts++; return transport; });
+                var published = 0;
+                client.UsageUpdated += _ => published++;
                 var read = client.ReadRateLimitsAsync(default);
                 await Until(() => transport.LastReadId > 0);
+                var firstId = transport.LastReadId;
                 transport.Push("{\"method\":\"account/updated\",\"params\":{}}");
                 await Until(() => client.AccountGeneration == 1);
-                transport.Push("{\"id\":" + transport.LastReadId + ",\"result\":" + Full + "}");
-                await ThrowsAsync<IOException>(() => read);
+                transport.HangReads = false;
+                transport.Push("{\"id\":" + firstId + ",\"result\":" + Full + "}");
+                var result = await read;
+                Check(result.AccountGeneration == 1 && result.Update.Primary is not null &&
+                    starts == 1 && !transport.Disposed && published == 1 && transport.LastReadId != firstId);
             });
             await RunAsync("malformed notification does not kill healthy reader", async () =>
             {
@@ -351,8 +369,11 @@ internal static class Tests
                 client.AccountChanged += value => accountGeneration = value;
                 var read = client.ReadRateLimitsAsync(default);
                 await Until(() => transport.LastReadId > 0);
+                var firstId = transport.LastReadId;
                 transport.Push("{\"method\":\"account/updated\",\"params\":{}}");
-                transport.Push("{\"id\":" + transport.LastReadId + ",\"result\":" + Full + "}");
+                transport.Push("{\"id\":" + firstId + ",\"result\":" + Full + "}");
+                await Until(() => transport.LastReadId != firstId);
+                transport.End();
                 await ThrowsAsync<IOException>(() => read);
                 Check(accountGeneration == client.AccountGeneration && accountGeneration > 0);
             });
