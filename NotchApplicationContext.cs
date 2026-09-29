@@ -68,7 +68,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
             else MessageBox.Show("Windows could not update your startup preference.", "Codex Usage Notch", MessageBoxButtons.OK, MessageBoxIcon.Information);
         };
         var exit = new ToolStripMenuItem("Exit"); exit.Click += async (_, _) => await ExitAsync();
-        var version = new ToolStripLabel($"Version {typeof(NotchApplicationContext).Assembly.GetName().Version?.ToString(3) ?? "unknown"}");
+        var version = new ToolStripLabel($"Version {AppVersion.Display(typeof(NotchApplicationContext).Assembly.GetName().Version)}");
         _menu.Items.AddRange([_refresh, _move, _connect, new ToolStripSeparator(), _visibility, _ring, _startup, new ToolStripSeparator(), version, exit]);
         _menu.Closed += (_, _) => _tray.ReturnFocus();
         _tray.Selected += () =>
@@ -142,7 +142,7 @@ internal sealed class NotchApplicationContext : ApplicationContext
             return;
         }
         if (_exit || update is null) return;
-        var answer = MessageBox.Show($"Codex Usage Notch v{update.Version.ToString(3)} is available. Download and install it now?",
+        var answer = MessageBox.Show($"Codex Usage Notch v{AppVersion.Display(update.Version)} is available. Download and install it now?",
             "Update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2);
         if (answer != DialogResult.Yes || _exit) return;
 

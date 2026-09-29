@@ -166,11 +166,12 @@ internal static class UiTests
                 popup.Dismiss();
             }
             popup.Dismiss();
-            using (var updateDialog = new UpdateProgressDialog(new Version(1, 2, 6), AppTheme.Current))
+            using (var updateDialog = new UpdateProgressDialog(new Version(1, 2, 6, 1), AppTheme.Current))
             {
                 var cancellations = 0;
                 updateDialog.CancelRequested += () => cancellations++;
                 updateDialog.Show(); Pump(30);
+                Check(updateDialog.Text == "Updating to v1.2.6.1", "update dialog shows the revision number");
                 updateDialog.SetProgress(55);
                 Check(Field<ProgressBar>(updateDialog, "_progress").Value == 55, "update dialog reports download progress");
                 Field<Button>(updateDialog, "_cancel").PerformClick();
@@ -241,7 +242,7 @@ internal static class UiTests
                 "tray menu offers position controls next to refresh");
             check(menu.Items.OfType<ToolStripMenuItem>().All(item => item.Text != "Top indicator position"),
                 "tray menu omits the redundant position submenu");
-            check(menu.Items.OfType<ToolStripLabel>().Any(item => item.Text == $"Version {typeof(NotchApplicationContext).Assembly.GetName().Version?.ToString(3)}"),
+            check(menu.Items.OfType<ToolStripLabel>().Any(item => item.Text == $"Version {AppVersion.Display(typeof(NotchApplicationContext).Assembly.GetName().Version)}"),
                 "tray menu displays the installed version");
             Until(() => State().Status == ConnectionStatus.Ready);
             var tray = Field<TrayHost>(context, "_tray");

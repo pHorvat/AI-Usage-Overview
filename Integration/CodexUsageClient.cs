@@ -160,7 +160,7 @@ internal sealed class CodexUsageClient : IAsyncDisposable
                 session.Reader = ReadLoopAsync(session);
                 await RequestAsync(session, "initialize", new
                 {
-                    clientInfo = new { name = "codex-usage-notch", version = typeof(CodexUsageClient).Assembly.GetName().Version?.ToString(3) }
+                    clientInfo = new { name = "codex-usage-notch", version = AppVersion.Display(typeof(CodexUsageClient).Assembly.GetName().Version) }
                 }, result => result.Clone(), linked.Token);
                 await session.Transport.WriteAsync("{\"method\":\"initialized\"}", linked.Token);
                 session.Ready = true;

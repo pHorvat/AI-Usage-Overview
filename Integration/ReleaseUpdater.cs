@@ -43,7 +43,7 @@ internal static class ReleaseUpdater
         if (release.ValueKind != JsonValueKind.Object || !release.TryGetProperty("tag_name", out var tagValue) ||
             tagValue.ValueKind != JsonValueKind.String) return null;
         var tag = tagValue.GetString();
-        if (tag is null || !System.Text.RegularExpressions.Regex.IsMatch(tag, @"^v[0-9]+\.[0-9]+\.[0-9]+$") ||
+        if (tag is null || !System.Text.RegularExpressions.Regex.IsMatch(tag, @"^v[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$") ||
             !Version.TryParse(tag[1..], out var version) || version <= installed ||
             !release.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) return null;
 
@@ -96,7 +96,8 @@ internal static class ReleaseUpdater
             var downloadedVersion = FileVersionInfo.GetVersionInfo(staged).FileVersion;
             if (!Version.TryParse(downloadedVersion, out var actualVersion) ||
                 actualVersion.Major != update.Version.Major || actualVersion.Minor != update.Version.Minor ||
-                actualVersion.Build != update.Version.Build)
+                actualVersion.Build != update.Version.Build ||
+                (update.Version.Revision >= 0 && actualVersion.Revision != update.Version.Revision))
                 throw new InvalidDataException("Release executable version did not match.");
             return staged;
         }

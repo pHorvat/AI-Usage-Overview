@@ -9,7 +9,7 @@ internal sealed class UpdateProgressDialog : Form
 
     public UpdateProgressDialog(Version version, AppTheme theme)
     {
-        Text = $"Updating to v{version.ToString(3)}";
+        Text = $"Updating to v{AppVersion.Display(version)}";
         AccessibleName = Text;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;

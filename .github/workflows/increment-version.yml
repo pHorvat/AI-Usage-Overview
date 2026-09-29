@@ -1,0 +1,40 @@
+name: Increment version revision
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: increment-version-main
+  queue: max
+
+jobs:
+  increment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Increment and push the fourth version component
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            git fetch origin main
+            if ($LASTEXITCODE -ne 0) { throw 'Could not fetch main.' }
+            git reset --hard origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'Could not reset the temporary checkout to main.' }
+            $version = & ./build/increment-version.ps1
+            git add CodexUsageNotch.csproj
+            git commit -m "Bump version to $version"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the version commit.' }
+            git push origin HEAD:main
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Output "Push raced with another change; retrying ($attempt/5)."
+          }
+          throw 'Could not push the version bump after five attempts.'

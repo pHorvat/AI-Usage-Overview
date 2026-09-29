@@ -153,6 +153,10 @@ internal static class Tests
                 Check(ReleaseUpdater.Parse(doc.RootElement, "unexpected.exe", new Version(1, 2, 5, 0)) is null);
                 using var wrongUrl = JsonDocument.Parse(json.Replace("https://github.com/", "https://example.com/"));
                 Check(ReleaseUpdater.Parse(wrongUrl.RootElement, "CodexUsageNotch-lite.exe", new Version(1, 2, 5, 0)) is null);
+                using var revision = JsonDocument.Parse(json.Replace("v1.2.6", "v1.2.6.1"));
+                Check(ReleaseUpdater.Parse(revision.RootElement, "CodexUsageNotch-lite.exe", new Version(1, 2, 6, 0))?.Version == new Version(1, 2, 6, 1));
+                Check(AppVersion.Display(new Version(1, 2, 6, 0)) == "1.2.6" &&
+                    AppVersion.Display(new Version(1, 2, 6, 1)) == "1.2.6.1");
             });
             await RunAsync("update verifies the downloaded executable and removes corrupt staging", async () =>
             {
@@ -170,6 +174,8 @@ internal static class Tests
                     Check(File.Exists(staged) && Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(staged))) == hash);
                     File.Delete(staged);
                     await ThrowsAsync<InvalidDataException>(() => ReleaseUpdater.DownloadAsync(update with { Sha256 = new string('0', 64) }, executable,
+                        new Progress<int>(), default, client));
+                    await ThrowsAsync<InvalidDataException>(() => ReleaseUpdater.DownloadAsync(update with { Version = new Version(1, 0, 0, 1) }, executable,
                         new Progress<int>(), default, client));
                     Check(Directory.GetFiles(directory).Length == 0);
                 }
