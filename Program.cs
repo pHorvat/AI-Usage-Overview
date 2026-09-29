@@ -11,6 +11,8 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        if (args is ["--apply-update", var executable, var staged, var pid, var sha256] && int.TryParse(pid, out var oldPid))
+            return ReleaseUpdater.Apply(executable, staged, oldPid, sha256);
         if (args is ["--render-previews", var directory])
         {
             PreviewRenderer.Render(directory);

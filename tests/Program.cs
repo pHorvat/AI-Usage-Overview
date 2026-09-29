@@ -1,6 +1,8 @@
 using CodexUsageNotch;
 using System.Text.Json;
 using System.Threading.Channels;
+using System.Security.Cryptography;
+using System.Net;
 
 internal static class Tests
 {
@@ -122,9 +124,11 @@ internal static class Tests
                     File.WriteAllText(path, "{\"taskbarUsageRingEnabled\":true,\"futurePreference\":42}");
                     var preferences = new UserPreferences(path); preferences.Load();
                     Check(preferences.RingEnabled && preferences.StripVisible && preferences.StripPosition == 0.5);
-                    preferences.StripVisible = false; preferences.StripPosition = 0.37; Check(preferences.Save());
+                    preferences.StripVisible = false; preferences.StripPosition = 0.37;
+                    preferences.LastUpdateCheckUtc = DateTimeOffset.Parse("2026-09-29T12:00:00Z"); Check(preferences.Save());
                     var next = new UserPreferences(path); next.Load();
-                    Check(!next.StripVisible && next.RingEnabled && next.StripPosition == 0.37);
+                    Check(!next.StripVisible && next.RingEnabled && next.StripPosition == 0.37 &&
+                        next.LastUpdateCheckUtc == preferences.LastUpdateCheckUtc);
                     Check(File.ReadAllText(path).Contains("futurePreference"));
                     File.WriteAllText(path, "{\"stripAlignment\":\"Right\"}");
                     var legacy = new UserPreferences(path); legacy.Load(); Check(legacy.StripPosition == 1);
@@ -133,6 +137,43 @@ internal static class Tests
                     File.WriteAllText(path, "corrupt"); var corrupt = new UserPreferences(path); corrupt.Load(); Check(corrupt.StripVisible && !corrupt.RingEnabled);
                 }
                 finally { File.Delete(path); Directory.Delete(directory); }
+            });
+            Run("update selects the matching edition and a newer stable version", () =>
+            {
+                const string digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+                var json = JsonSerializer.Serialize(new { tag_name = "v1.2.6", assets = new[]
+                {
+                    new { name = "CodexUsageNotch.exe", browser_download_url = "https://github.com/pHorvat/AI-Usage-Overview/releases/download/v1.2.6/CodexUsageNotch.exe", digest },
+                    new { name = "CodexUsageNotch-lite.exe", browser_download_url = "https://github.com/pHorvat/AI-Usage-Overview/releases/download/v1.2.6/CodexUsageNotch-lite.exe", digest }
+                } });
+                using var doc = JsonDocument.Parse(json);
+                var update = ReleaseUpdater.Parse(doc.RootElement, "CodexUsageNotch-lite.exe", new Version(1, 2, 5, 0));
+                Check(update?.Version == new Version(1, 2, 6) && update.Download.AbsoluteUri.EndsWith("CodexUsageNotch-lite.exe"));
+                Check(ReleaseUpdater.Parse(doc.RootElement, "CodexUsageNotch-lite.exe", new Version(1, 2, 6, 0)) is null);
+                Check(ReleaseUpdater.Parse(doc.RootElement, "unexpected.exe", new Version(1, 2, 5, 0)) is null);
+                using var wrongUrl = JsonDocument.Parse(json.Replace("https://github.com/", "https://example.com/"));
+                Check(ReleaseUpdater.Parse(wrongUrl.RootElement, "CodexUsageNotch-lite.exe", new Version(1, 2, 5, 0)) is null);
+            });
+            await RunAsync("update verifies the downloaded executable and removes corrupt staging", async () =>
+            {
+                var source = Path.Combine(AppContext.BaseDirectory, "CodexUsageNotch.Tests.exe");
+                var bytes = await File.ReadAllBytesAsync(source);
+                var hash = Convert.ToHexString(SHA256.HashData(bytes));
+                var directory = Path.Combine(Path.GetTempPath(), "CodexUsageNotch-update-test-" + Guid.NewGuid());
+                Directory.CreateDirectory(directory);
+                try
+                {
+                    using var client = new HttpClient(new StaticResponseHandler(bytes));
+                    var executable = Path.Combine(directory, "CodexUsageNotch.Tests.exe");
+                    var update = new ReleaseUpdate(new Version(1, 0, 0), new Uri("https://example.com/release.exe"), hash);
+                    var staged = await ReleaseUpdater.DownloadAsync(update, executable, new Progress<int>(), default, client);
+                    Check(File.Exists(staged) && Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(staged))) == hash);
+                    File.Delete(staged);
+                    await ThrowsAsync<InvalidDataException>(() => ReleaseUpdater.DownloadAsync(update with { Sha256 = new string('0', 64) }, executable,
+                        new Progress<int>(), default, client));
+                    Check(Directory.GetFiles(directory).Length == 0);
+                }
+                finally { Directory.Delete(directory, true); }
             });
             Run("recovery details explain the failed step and next attempt", () =>
             {
@@ -448,5 +489,10 @@ internal static class Tests
             public void Dispose() => _disposed = true;
             public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
         }
+    }
+    private sealed class StaticResponseHandler(byte[] bytes) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
     }
 }

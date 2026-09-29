@@ -45,7 +45,9 @@ Run one edition at a time. If an instance is already running, opening another ex
 
 ### Updating the app
 
-Download your preferred edition from [GitHub Releases](https://github.com/pHorvat/AI-Usage-Overview/releases), choose **Exit** from the running app's tray menu, and replace your old executable with the downloaded file. Launch it again to use the new version. Keep the same location and filename if you have enabled **Start with Windows**. Your saved preferences remain in place.
+Starting with v1.2.6, the app checks the latest stable [GitHub Release](https://github.com/pHorvat/AI-Usage-Overview/releases) on startup if it has not checked successfully in the last 24 hours. If a newer version exists, it asks whether to install it; choosing **No** leaves the current version running. Choosing **Yes** downloads the edition you already use, checks its SHA-256 digest and executable version, exits the app, replaces the executable in its current location, and starts the new version. You can cancel while it downloads. The previous executable is kept as a temporary backup during replacement. An offline or failed check leaves the app running and can retry on the next launch. If the folder is not writable, the update fails without changing the current app; use the manual steps below.
+
+Versions before v1.2.6 need one manual update to gain this feature. To update manually, download your preferred edition from GitHub Releases, choose **Exit** from the running app's tray menu, and replace your old executable with the downloaded file. Launch it again to use the new version. Keep the same location and filename if you have enabled **Start with Windows**. Your saved preferences remain in place.
 
 ## Controls
 
@@ -127,10 +129,11 @@ The indicator's files live in `%LocalAppData%\CodexUsageNotch`. Paste that path 
 
 | File | Contents |
 | --- | --- |
-| `settings.json` | Top-strip visibility and position, and tray-ring preference |
+| `settings.json` | Top-strip visibility and position, tray-ring preference, and last successful update-check time |
 | `diagnostics.log`, `diagnostics.log.1` | Sanitized operation names, timestamps, exception types, and error codes; roughly 128 KiB per file |
+| `updater-*` | Temporary copy of the current executable used to finish an accepted update after the app exits; removed on a later launch |
 
-Diagnostics exclude raw responses, sign-in URLs, and credentials. The indicator uploads no logs. **Start with Windows** is stored separately in your Windows user's startup registry entry.
+During an accepted update, a temporary download and backup also live beside your executable until replacement finishes. Diagnostics exclude raw responses, sign-in URLs, and credentials. The indicator uploads no logs. The update check makes a request to GitHub's public release API at most once every 24 hours while the app starts successfully; if you accept an update, the app downloads the release executable from GitHub. No GitHub sign-in is needed. **Start with Windows** is stored separately in your Windows user's startup registry entry.
 
 ## Develop and test
 
@@ -212,6 +215,6 @@ The scripts in `build/` handle building (`build-release.bat`), testing (`test.ba
 - **Changes not visible:** exit the existing instance and run the new build; root releases need the release script.
 - **Cleanup reports a running app or locked files:** exit the development/test executable and retry.
 
-The app-server interface can change with Codex updates. Mixed-DPI monitors, Narrator, overflow-tray behavior, Explorer restart, sleep/resume, and browser/network failures still need manual checks on target hardware. Releases are distributed as standalone executables through GitHub Releases. There is no installer, code signing, or automatic updater.
+The app-server interface can change with Codex updates. Mixed-DPI monitors, Narrator, overflow-tray behavior, Explorer restart, sleep/resume, and browser/network failures still need manual checks on target hardware. Releases are distributed as standalone executables through GitHub Releases. There is no installer or code signing.
 
 To uninstall, disable **Start with Windows**, exit, and delete the executable. Delete the local settings/log folder separately if desired.

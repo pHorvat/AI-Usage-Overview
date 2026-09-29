@@ -184,7 +184,7 @@ internal sealed class CardPopup : Form
     public CardPopup()
     {
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
-        AutoScaleMode = AutoScaleMode.None; StartPosition = FormStartPosition.Manual; KeyPreview = true; AutoScroll = true;
+        AutoScaleMode = AutoScaleMode.None; StartPosition = FormStartPosition.Manual; KeyPreview = true;
         AccessibleName = "Codex usage details";
         Controls.AddRange([Card, _refresh, _connect, _move]);
         _refresh.Click += (_, _) => RefreshRequested?.Invoke();
@@ -206,41 +206,38 @@ internal sealed class CardPopup : Form
         if (interactive) { TrayHost.SetForegroundWindow(Handle); Activate(); _refresh.Focus(); }
         else _watch.Start();
     }
-    public void Present(UsageState state, AppTheme theme, RecoveryInfo? recovery = null)
+    public void Present(UsageState state, AppTheme theme, RecoveryInfo? recovery = null, float? textScaleOverride = null)
     {
         if (_layout) return;
         _layout = true;
         try
         {
-            var scroll = AutoScrollPosition;
-            AutoScrollPosition = Point.Empty;
             _state = state; _theme = theme; _recovery = recovery;
             var scale = DeviceDpi / 96f;
-            var textScale = AppTheme.TextScale;
-            Card.Present(state, theme, scale, textScale, DateTimeOffset.UtcNow, recovery);
+            var textScale = textScaleOverride ?? AppTheme.TextScale;
             _refresh.Visible = _connect.Visible = _move.Visible = _interactive;
             _refresh.Enabled = state.Status != ConnectionStatus.SigningIn;
             _connect.Enabled = state.Status != ConnectionStatus.SigningIn;
             _connect.Text = state.Status == ConnectionStatus.SigningIn ? "Signing in…" : "Connect ChatGPT";
-            var fontSize = 12 * scale * textScale;
-            if (_buttonFont is null || Math.Abs(_buttonFont.Size - fontSize) > .01f)
-            {
-                var oldFont = _buttonFont;
-                _buttonFont = new Font("Segoe UI", fontSize, FontStyle.Regular, GraphicsUnit.Pixel);
-                _refresh.Font = _connect.Font = _move.Font = _buttonFont;
-                oldFont?.Dispose();
-            }
-            var padding = (int)(16 * scale);
-            var buttonHeight = Math.Max((int)(34 * scale), _buttonFont.Height + padding);
-            _refresh.SetBounds(padding, Card.Height + padding / 2, (Card.Width - padding * 3) / 2, buttonHeight);
-            _connect.SetBounds(_refresh.Right + padding, _refresh.Top, _refresh.Width, buttonHeight);
-            _move.SetBounds(padding, _refresh.Bottom + padding / 2, Card.Width - padding * 2, buttonHeight);
-            var desired = new Size(Card.Width, Card.Height + (_interactive ? buttonHeight * 2 + padding * 2 : 0));
             var anchor = _anchor?.Invoke() ?? Bounds;
             var work = Screen.FromRectangle(anchor).WorkingArea;
-            ClientSize = new Size(Math.Min(desired.Width, work.Width), Math.Min(desired.Height, work.Height));
-            AutoScrollMinSize = desired;
-            AutoScrollPosition = new Point(-scroll.X, -scroll.Y);
+            var available = new Size(Math.Min(work.Width, MaximumSize.Width > 0 ? MaximumSize.Width : work.Width),
+                Math.Min(work.Height, MaximumSize.Height > 0 ? MaximumSize.Height : work.Height));
+            var desired = Layout(scale);
+            if (desired.Width > available.Width || desired.Height > available.Height)
+            {
+                var low = .05f;
+                var high = 1f;
+                for (var i = 0; i < 16; i++)
+                {
+                    var middle = (low + high) / 2;
+                    var measured = Layout(scale * middle);
+                    if (measured.Width <= available.Width && measured.Height <= available.Height) low = middle;
+                    else high = middle;
+                }
+                desired = Layout(scale * low);
+            }
+            ClientSize = desired;
             theme.Apply(this);
             using var path = Shape.Round(ClientRectangle, (int)(12 * scale));
             var previous = Region; Region = new Region(path); previous?.Dispose();
@@ -248,6 +245,25 @@ internal sealed class CardPopup : Form
             {
                 Location = _below ? new Point(Math.Clamp(anchor.Left + anchor.Width / 2 - Width / 2, work.Left, Math.Max(work.Left, work.Right - Width)), work.Top)
                     : PopupPlacement.Place(anchor, Size, work, (int)(8 * scale));
+            }
+
+            Size Layout(float layoutScale)
+            {
+                Card.Present(state, theme, layoutScale, textScale, DateTimeOffset.UtcNow, recovery);
+                var fontSize = 12 * layoutScale * textScale;
+                if (_buttonFont is null || Math.Abs(_buttonFont.Size - fontSize) > .01f)
+                {
+                    var oldFont = _buttonFont;
+                    _buttonFont = new Font("Segoe UI", fontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+                    _refresh.Font = _connect.Font = _move.Font = _buttonFont;
+                    oldFont?.Dispose();
+                }
+                var padding = Math.Max(1, (int)Math.Round(16 * layoutScale));
+                var buttonHeight = Math.Max((int)Math.Round(34 * layoutScale), _buttonFont.Height + padding);
+                _refresh.SetBounds(padding, Card.Height + padding / 2, (Card.Width - padding * 3) / 2, buttonHeight);
+                _connect.SetBounds(_refresh.Right + padding, _refresh.Top, _refresh.Width, buttonHeight);
+                _move.SetBounds(padding, _refresh.Bottom + padding / 2, Card.Width - padding * 2, buttonHeight);
+                return new Size(Card.Width, Card.Height + (_interactive ? buttonHeight * 2 + padding * 2 : 0));
             }
         }
         finally { _layout = false; }

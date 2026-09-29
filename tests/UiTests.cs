@@ -89,6 +89,8 @@ internal static class UiTests
                 var move = actions.Single(button => button.Text == "Move top indicator");
                 Check(stripCard.Interactive && move.Visible && move.Top >= refresh.Bottom,
                     "clicked strip card shows Move top indicator below Refresh");
+                Check(!stripCard.AutoScroll && !stripCard.VerticalScroll.Visible && !stripCard.HorizontalScroll.Visible,
+                    "clicked top indicator card has no scrollbars");
                 var requested = 0;
                 stripCard.MoveRequested += () => requested++;
                 move.PerformClick();
@@ -147,12 +149,41 @@ internal static class UiTests
                 popup.Present(PreviewRenderer.Sample, theme);
                 Check(popup.Card.BackColor == theme.Surface, "live theme updates card");
             }
-            popup.MaximumSize = new Size(180, 120);
-            popup.Open(() => anchor, false, true); Pump(80);
-            Check(popup.AutoScroll && popup.VerticalScroll.Visible && popup.HorizontalScroll.Visible, "oversized card offers scrolling");
-            popup.ScrollControlIntoView(buttons[1]); Pump(80);
-            Check(popup.ClientRectangle.IntersectsWith(buttons[1].Bounds), "actions remain reachable in a constrained viewport");
+            popup.MaximumSize = new Size(420, 400);
+            foreach (var textScale in new[] { 1f, 2f, 2.25f })
+            {
+                popup.Present(new UsageState(null, ConnectionStatus.Retrying, null), AppTheme.Current,
+                    new RecoveryInfo("Codex did not answer the allowance request in time.", false, DateTimeOffset.UtcNow.AddSeconds(15)), textScale);
+                popup.Open(() => anchor, false, true); Pump(80);
+                popup.Present(new UsageState(null, ConnectionStatus.Retrying, null), AppTheme.Current,
+                    new RecoveryInfo("Codex did not answer the allowance request in time.", false, DateTimeOffset.UtcNow.AddSeconds(15)), textScale);
+                Check(!popup.AutoScroll && !popup.VerticalScroll.Visible && !popup.HorizontalScroll.Visible,
+                    $"popup has no scrollbars at {textScale:P0} text scaling");
+                Check(popup.Width <= 420 && popup.Height <= 400 && popup.ClientRectangle.Contains(popup.Card.Bounds) &&
+                    popup.Card.TextBounds.All(rect => popup.Card.ClientRectangle.Contains(rect)) &&
+                    buttons.All(button => popup.ClientRectangle.Contains(button.Bounds)),
+                    $"card and actions fit the constrained popup at {textScale:P0} text scaling");
+                popup.Dismiss();
+            }
             popup.Dismiss();
+            using (var updateDialog = new UpdateProgressDialog(new Version(1, 2, 6), AppTheme.Current))
+            {
+                var cancellations = 0;
+                updateDialog.CancelRequested += () => cancellations++;
+                updateDialog.Show(); Pump(30);
+                updateDialog.SetProgress(55);
+                Check(Field<ProgressBar>(updateDialog, "_progress").Value == 55, "update dialog reports download progress");
+                Field<Button>(updateDialog, "_cancel").PerformClick();
+                Check(cancellations == 1, "update dialog allows cancelling the download");
+                updateDialog.Finish();
+                Check(!updateDialog.Visible, "update dialog closes after download completes");
+            }
+            using (var completedDialog = new UpdateProgressDialog(new Version(1, 2, 6), AppTheme.Current))
+            {
+                completedDialog.Show(); Pump(30);
+                completedDialog.Finish();
+                Check(!completedDialog.Visible, "completed update closes its progress dialog");
+            }
             using var login = new LoginDialog();
             login.SetFailure(); login.Show(); Pump(80);
             var loginButtons = login.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().ToArray();

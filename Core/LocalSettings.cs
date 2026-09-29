@@ -13,6 +13,7 @@ internal sealed class UserPreferences(string? path = null)
     public bool RingEnabled { get; set; }
     public bool StripVisible { get; set; } = true;
     public double StripPosition { get; set; } = 0.5;
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; }
     public void Load()
     {
         try
@@ -26,6 +27,9 @@ internal sealed class UserPreferences(string? path = null)
             StripPosition = _data["stripPosition"] is JsonValue position && position.TryGetValue<double>(out var fraction)
                 && double.IsFinite(fraction) && fraction is >= 0 and <= 1
                 ? fraction : (double)legacyAlignment / 2;
+            LastUpdateCheckUtc = _data["lastUpdateCheckUtc"] is JsonValue checkedAt && checkedAt.TryGetValue<string>(out var timestamp)
+                && DateTimeOffset.TryParse(timestamp, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) ? parsed : null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         { Diagnostics.Write("settings-read", e); }
@@ -39,6 +43,7 @@ internal sealed class UserPreferences(string? path = null)
             _data["taskbarUsageRingEnabled"] = RingEnabled;
             _data["stripVisible"] = StripVisible;
             _data["stripPosition"] = StripPosition;
+            _data["lastUpdateCheckUtc"] = LastUpdateCheckUtc?.ToString("O");
             File.WriteAllText(_path + ".tmp", _data.ToJsonString());
             File.Move(_path + ".tmp", _path, true);
             return true;

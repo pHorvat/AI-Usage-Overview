@@ -109,13 +109,74 @@ internal sealed class NotchApplicationContext : ApplicationContext
         Present();
         _dispatch.BeginInvoke(new Action(() =>
         {
-            if (_smokeReport is null) StartRefresh();
+            if (_smokeReport is null) { StartRefresh(); _ = CheckForUpdatesAsync(); _ = CleanupUpdateHelpersAsync(); }
             else
             {
                 _state = PreviewRenderer.Sample;
                 Present(); OpenPopup(false);
             }
         }));
+    }
+    private async Task CleanupUpdateHelpersAsync()
+    {
+        try { await Task.Delay(10000, _shutdown.Token); ReleaseUpdater.CleanupHelpers(); }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (Exception error) { Diagnostics.Write("update-cleanup", error); }
+    }
+    private async Task CheckForUpdatesAsync()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_preferences.LastUpdateCheckUtc is { } last && now >= last && now - last < TimeSpan.FromDays(1)) return;
+        ReleaseUpdate? update;
+        try
+        {
+            var installed = typeof(NotchApplicationContext).Assembly.GetName().Version ?? new Version(0, 0, 0);
+            update = await ReleaseUpdater.CheckAsync(Application.ExecutablePath, installed, _shutdown.Token);
+            _preferences.LastUpdateCheckUtc = DateTimeOffset.UtcNow;
+            if (!_preferences.Save()) Diagnostics.Write("update-check-setting");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { return; }
+        catch (Exception error)
+        {
+            Diagnostics.Write("update-check", error);
+            return;
+        }
+        if (_exit || update is null) return;
+        var answer = MessageBox.Show($"Codex Usage Notch v{update.Version.ToString(3)} is available. Download and install it now?",
+            "Update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes || _exit) return;
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        using var dialog = new UpdateProgressDialog(update.Version, _theme);
+        dialog.CancelRequested += cancellation.Cancel;
+        dialog.Show();
+        string? staged = null;
+        var handedOff = false;
+        try
+        {
+            staged = await ReleaseUpdater.DownloadAsync(update, Application.ExecutablePath,
+                new Progress<int>(dialog.SetProgress), cancellation.Token);
+            if (_exit || cancellation.IsCancellationRequested) return;
+            ReleaseUpdater.LaunchHelper(Application.ExecutablePath, staged, update.Sha256);
+            handedOff = true;
+            await ExitAsync();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            Diagnostics.Write("update-download", error);
+            dialog.Hide();
+            MessageBox.Show("The update could not be installed. The current app is unchanged. Please try again later or download it from GitHub Releases.",
+                "Codex Usage Notch", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            dialog.Finish();
+            if (!handedOff && staged is not null && File.Exists(staged))
+            {
+                try { File.Delete(staged); } catch (IOException) { }
+            }
+        }
     }
     private void SavePreferences()
     {
