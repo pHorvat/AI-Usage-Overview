@@ -221,4 +221,4 @@ The scripts in `build/` handle building (`build-release.bat`), testing (`test.ba
 
 The app-server interface can change with Codex updates. Mixed-DPI monitors, Narrator, overflow-tray behavior, Explorer restart, sleep/resume, and browser/network failures still need manual checks on target hardware. Releases are distributed as standalone executables through GitHub Releases. There is no installer or code signing.
 
-To uninstall, disable **Start with Windows**, exit, and delete the executable. Delete the local settings/log folder separately if desired.
+To uninstall, disable **Start with Windows**, exit, and delete the executable. Delete the local settings/log folder separately if desired. 
