@@ -14,12 +14,15 @@ concurrency:
 jobs:
   increment:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.bump.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           ref: main
           fetch-depth: 0
       - name: Increment and push the fourth version component
+        id: bump
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
@@ -34,7 +37,25 @@ jobs:
             git commit -m "Bump version to $version"
             if ($LASTEXITCODE -ne 0) { throw 'Could not create the version commit.' }
             git push origin HEAD:main
-            if ($LASTEXITCODE -eq 0) { exit 0 }
-            Write-Output "Push raced with another change; retrying ($attempt/5)."
+            if ($LASTEXITCODE -ne 0) {
+              Write-Output "Push raced with another change; retrying ($attempt/5)."
+              continue
+            }
+            $tag = "v$version"
+            git tag $tag
+            if ($LASTEXITCODE -ne 0) { throw "Could not create tag $tag." }
+            git push origin "refs/tags/$tag"
+            if ($LASTEXITCODE -ne 0) { throw "Could not push tag $tag." }
+            "release_tag=$tag" >> $env:GITHUB_OUTPUT
+            exit 0
           }
           throw 'Could not push the version bump after five attempts.'
+
+  release:
+    name: Test and publish new version
+    needs: increment
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_tag: ${{ needs.increment.outputs.release_tag }}

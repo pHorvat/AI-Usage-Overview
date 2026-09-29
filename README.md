@@ -163,18 +163,9 @@ dotnet run --project CodexUsageNotch.csproj -c Release -- --render-previews .\bu
 
 ## Build a release
 
-GitHub Actions runs core checks on pushes and pull requests. A separate **Increment version revision** workflow runs after each push to `main` and commits the next fourth component in `CodexUsageNotch.csproj`: for example, `1.2.6` becomes `1.2.6.1`, then `1.2.6.2`. The workflow's own commit does not start another push workflow. To start a new base version, change the first three components manually; the next push to `main` adds or increments the fourth component.
+GitHub Actions runs core checks on pushes and pull requests. A separate **Increment version revision** workflow runs after each push to `main` and commits the next fourth component in `CodexUsageNotch.csproj`: for example, `1.2.6` becomes `1.2.6.1`, then `1.2.6.2`. It creates the matching `v` tag, runs core tests, builds both Windows executables, and publishes a GitHub Release with both files. The workflow's own commit does not start another push workflow. To start a new base version, change the first three components manually; the next push to `main` adds or increments the fourth component. Desktop UI tests still need an interactive Windows session.
 
-To publish both Windows executables as a GitHub Release, wait for the version workflow to finish, pull its commit, and push a tag that matches the complete project version. The tag workflow checks the version, builds both editions, and publishes them as release assets. Desktop UI tests still need an interactive Windows session.
-
-If a release build fails, rerun the workflow manually from the Actions tab with its `release_tag` input set to the existing tag.
-
-```powershell
-git pull --ff-only
-$version = ([xml](Get-Content CodexUsageNotch.csproj -Raw)).Project.PropertyGroup.Version
-git tag "v$version"
-git push origin "v$version"
-```
+If a release build fails, rerun the **CI** workflow manually from the Actions tab with its `release_tag` input set to the existing tag.
 
 Exit the indicator, then run:
 
